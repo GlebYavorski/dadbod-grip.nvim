@@ -196,6 +196,42 @@ with_mock_schema(function()
   ok(found_line ~= nil and found_line > 0, "scroll_to: line number is positive")
 end)
 
+-- ── focused diagram: direct parents + focus + direct children only ───────────
+
+with_mock_schema(function()
+  local lines, _, line_to_node, table_lines = er._build_content("sqlite:test.db", "production_batches")
+  local joined = table.concat(lines, "\n")
+
+  ok(joined:find("Focus: production_batches", 1, true) ~= nil,
+     "focused diagram title names the focus table")
+  ok(joined:find("production_batches (FOCUS)", 1, true) ~= nil,
+     "focused diagram marks the focused table")
+  ok(joined:find("facilities", 1, true) ~= nil,
+     "focused diagram includes direct parent table")
+  ok(joined:find("rolls", 1, true) ~= nil,
+     "focused diagram includes direct child table")
+  ok(joined:find("bamboo_cartel_members", 1, true) == nil,
+     "focused diagram excludes grandparent table")
+  ok(joined:find("consumer_incidents", 1, true) == nil,
+     "focused diagram excludes grandchild table")
+
+  eq(#table_lines, 3, "focused diagram has one line per included table")
+  for _, node in pairs(line_to_node) do
+    if node.kind == "table" then
+      ok(node.name ~= "production_batches (FOCUS)",
+         "line_to_node keeps real table names without the focus marker")
+    end
+  end
+end)
+
+with_mock_schema(function()
+  local lines, _, _, table_lines = er._build_content("sqlite:test.db", "missing_table")
+  local joined = table.concat(lines, "\n")
+  ok(joined:find("Focus:", 1, true) == nil,
+     "missing focus table falls back to full diagram")
+  eq(#table_lines, 5, "missing focus fallback keeps all tables")
+end)
+
 -- ── Long column name truncation ───────────────────────────────────────────────
 -- A table with a very long column name should have it truncated to ≤12 display
 -- chars (+ 1 for the "…" suffix), keeping each column slot narrow.

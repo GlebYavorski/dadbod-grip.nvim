@@ -453,7 +453,7 @@ local function do_refresh(bufnr, url, query_sql, table_name)
   end
 
   -- Re-fetch primary keys
-  if table_name then
+  if table_name and not db.is_readonly(url) then
     local pks, pk_err = db.get_primary_keys(table_name, url)
     result.primary_keys = (pk_err == nil) and pks or {}
   else
@@ -712,7 +712,7 @@ function M._mutation_preview(mutation_sql, url, stmt_type, caller_opts)
   end
 
   -- Fetch PKs
-  local pks = db.get_primary_keys(table_name, url) or {}
+  local pks = db.is_readonly(url) and {} or (db.get_primary_keys(table_name, url) or {})
   result.primary_keys = pks
   result.table_name = table_name
   result.url = url
@@ -927,7 +927,7 @@ function M.open(arg, url, opts)
   end
 
   -- Fetch primary keys if we have a table name
-  if table_name_arg then
+  if table_name_arg and not db.is_readonly(conn) then
     local pks, _ = db.get_primary_keys(table_name_arg, conn)
     result.primary_keys = pks or {}
   else
@@ -2478,6 +2478,10 @@ function M.do_fill_rows(n)
 
   -- Build single-table DDL so the AI knows exactly what to fill.
   local db_mod = require("dadbod-grip.db")
+  if db_mod.is_readonly(db_url) then
+    vim.notify("GripFill: this adapter is read-only", vim.log.levels.WARN)
+    return
+  end
   local cols  = db_mod.get_column_info(tbl, db_url)
   local pks   = db_mod.get_primary_keys(tbl, db_url)
   local ok_fk, fks = pcall(db_mod.get_foreign_keys, tbl, db_url)

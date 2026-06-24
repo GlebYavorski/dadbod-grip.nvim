@@ -95,6 +95,7 @@ local function get_state(url)
     _states[url] = {
       url = url,
       items = nil,       -- { {name, type}, ... }: nil = not fetched
+      routines = nil,    -- { {name, display, type}, ... }: nil = not fetched
       file_cols = nil,   -- for file-as-table: { {column_name, data_type}, ... }
       expanded = {},      -- set of expanded table names
       col_cache = {},        -- table_name → column_info[]
@@ -116,6 +117,8 @@ local function fetch_tables(state)
     return
   end
   state.items = tables
+  local routines = db.list_routines(state.url)
+  state.routines = routines or {}
 end
 
 --- Fetch column schema for a file-as-table URL (Parquet, CSV, remote file).
@@ -351,6 +354,45 @@ local function build_nodes(state)
     end
   end
 
+  if state.routines and #state.routines > 0 then
+    local functions = {}
+    local procedures = {}
+    for _, routine in ipairs(state.routines) do
+      local display = routine.display or routine.name
+      if state.filter then
+        local needle = state.filter:lower()
+        local hay_name = (routine.name or ""):lower()
+        local hay_display = (display or ""):lower()
+        if not hay_name:find(needle, 1, true) and not hay_display:find(needle, 1, true) then
+          goto continue_routine
+        end
+      end
+      if routine.type == "procedure" then
+        table.insert(procedures, routine)
+      else
+        table.insert(functions, routine)
+      end
+      ::continue_routine::
+    end
+
+    local function add_routines(header, routines)
+      if #routines == 0 then return end
+      if #nodes > 0 then table.insert(nodes, { kind = "sep" }) end
+      table.insert(nodes, { kind = "header", text = header .. " (" .. #routines .. ")" })
+      for _, routine in ipairs(routines) do
+        table.insert(nodes, {
+          kind = "routine",
+          name = routine.name,
+          display = routine.display or routine.name,
+          type = routine.type or "function",
+        })
+      end
+    end
+
+    add_routines("Functions", functions)
+    add_routines("Procedures", procedures)
+  end
+
   state.nodes = nodes
   return nodes
 end
@@ -440,6 +482,14 @@ local function render(state)
         local fk_start = node.pk and 2 + #"🔑" or 3
         table.insert(highlights, { line = #lines - 1, col = fk_start, end_col = fk_start + #"🔗", hl = "GripUrl" })
       end
+    elseif node.kind == "routine" then
+      local icon = node.type == "procedure" and " ◇ " or " ƒ "
+      local win_width = (_sidebar_winid and vim.api.nvim_win_is_valid(_sidebar_winid))
+          and vim.api.nvim_win_get_width(_sidebar_winid)
+          or SIDEBAR_MAX_WIDTH
+      local display_name = truncate_name(node.display or node.name, math.max(1, win_width - 3))
+      table.insert(lines, icon .. display_name)
+      table.insert(highlights, { line = #lines - 1, col = 1, end_col = #icon, hl = "GripUrl" })
     elseif node.kind == "sep" then
       table.insert(lines, "")
     end
@@ -508,6 +558,34 @@ local function open_table_split(table_name, url)
     vim.api.nvim_set_current_win(target_win)
   end
   grip.open(table_name, url, { force_split = true })
+end
+
+--- Open a routine definition in a read-only SQL buffer.
+local function open_routine_source(routine_name, url)
+  local source, err = db.get_routine_source(routine_name, url)
+  if not source then
+    vim.notify("Grip: " .. (err or "Failed to load routine source"), vim.log.levels.ERROR)
+    return
+  end
+
+  local target_win = find_right_win()
+  if target_win then
+    vim.api.nvim_set_current_win(target_win)
+  else
+    vim.cmd("rightbelow vsplit")
+    target_win = vim.api.nvim_get_current_win()
+  end
+
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(bufnr, "grip://routine/" .. routine_name)
+  vim.bo[bufnr].buftype = "nofile"
+  vim.bo[bufnr].bufhidden = "wipe"
+  vim.bo[bufnr].filetype = "sql"
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(source, "\n", { plain = true }))
+  vim.bo[bufnr].modifiable = false
+  vim.bo[bufnr].readonly = true
+  vim.api.nvim_win_set_buf(target_win, bufnr)
 end
 
 --- Line number offset for node list (title + blank [+ filter + blank]).
@@ -587,6 +665,8 @@ local function setup_keymaps(url)
       open_table(node.name, url)
     elseif node.kind == "column" and node.table_name then
       open_table(node.table_name, url)
+    elseif node.kind == "routine" then
+      open_routine_source(node.name, url)
     end
   end)
 
@@ -599,6 +679,8 @@ local function setup_keymaps(url)
       open_table_split(node.name, url)
     elseif node.kind == "column" and node.table_name then
       open_table_split(node.table_name, url)
+    elseif node.kind == "routine" then
+      open_routine_source(node.name, url)
     end
   end)
 
@@ -702,6 +784,7 @@ local function setup_keymaps(url)
     if not node then return end
     local name = (node.kind == "table" and node.name)
               or (node.kind == "column" and node.name)
+              or (node.kind == "routine" and node.name)
               or nil
     if name then
       vim.fn.setreg("+", name)
@@ -828,6 +911,7 @@ local function setup_keymaps(url)
     local ddl = require("dadbod-grip.ddl")
     ddl.drop_table(node.name, url, function()
       state.items = nil
+      state.routines = nil
       state.col_cache = {}
       state.row_count_cache = {}
       fetch_tables(state)
@@ -919,7 +1003,7 @@ local function setup_keymaps(url)
   kmap("er_diagram", function()
     local node = node_at_cursor(state)
     local tbl  = node and node.kind == "table" and node.name
-    require("dadbod-grip.er_diagram").toggle(url, tbl)
+    require("dadbod-grip.er_diagram").toggle(url, tbl, { focus = tbl ~= nil })
   end)
 
   -- sidebar_escape: close sidebar
@@ -952,7 +1036,7 @@ local function setup_keymaps(url)
       "  1         Connections picker",
       "  2         Query pad",
       "  3         Jump to grid / table picker",
-      "  4         ER diagram float",
+      "  4         ER diagram (full map)",
       "  5         Stats view",
       "  6         Columns view",
       "  7         Foreign keys view",
@@ -972,7 +1056,7 @@ local function setup_keymaps(url)
       "  q         Query pad",
       "  ga        Attach external DB (DuckDB federation)",
       "  gd        Detach attached database",
-      "  gG        ER diagram (all tables + FK relationships)",
+      "  gG        ER diagram (focus table neighborhood)",
       "  D         Drop table (confirm)",
       "  +         Create table",
       "  Esc       Close sidebar",
@@ -1148,6 +1232,7 @@ M.get_state = get_state
 
 --- Exposed for testing only.
 M._truncate_name = truncate_name
+M._build_nodes = build_nodes
 
 --- Refresh sidebar if visible (e.g., after connection switch).
 function M.refresh(url)
@@ -1155,6 +1240,7 @@ function M.refresh(url)
   local state = get_state(url)
   -- Invalidate all caches so fresh data is fetched
   state.items = nil
+  state.routines = nil
   state.file_cols = nil
   state.col_cache = {}
   state.pk_cache = {}

@@ -37,8 +37,9 @@ CONTENTS                                                    *grip-contents*
 1. INTRODUCTION                                          *grip-introduction*
 
 dadbod-grip.nvim is a database client for Neovim with support for
-PostgreSQL, MySQL, SQLite, DuckDB, and MotherDuck. Each engine gets
-schema browsing, inline cell editing, and metadata inspection.
+PostgreSQL, MySQL, SQLite, DuckDB, MotherDuck, and read-only SQL Server.
+Each engine gets schema browsing and metadata inspection; writable engines
+also support inline cell editing.
 
 Renders query results as editable grids with visual change staging,
 sort/filter/pagination, foreign key navigation, schema browsing, and a
@@ -61,6 +62,7 @@ Quick start: >
   SQLite ............. sqlite3
   MySQL/MariaDB ...... mysql (auto-detects MariaDB; uses --batch output)
   DuckDB ............. duckdb
+  SQL Server ......... sqlcmd (read-only grid support in v1)
 
 ==============================================================================
 3. INSTALLATION                                              *grip-install*
@@ -69,8 +71,16 @@ lazy.nvim (recommended): >lua
   {
     "joryeugene/dadbod-grip.nvim",
     version = "*",
-    cmd = { "Grip", "GripSchema", "GripTables", "GripQuery", "GripConnect",
-            "GripStart", "GripHome" },
+  }
+<
+The plugin ships a lazy.lua package spec, so you do not need to copy a
+cmd = { ... } command list into your config. Leaving cmd out avoids stale
+command lists when new :Grip* commands are added.
+
+With keymaps: >lua
+  {
+    "joryeugene/dadbod-grip.nvim",
+    version = "*",
     keys = {
       { "<leader>lg", function() require("dadbod-grip").open_smart() end,
         desc = "Grip: Open grid" },
@@ -82,6 +92,15 @@ lazy.nvim (recommended): >lua
     opts = {},
   }
 <
+Local checkout for development/testing: >lua
+  {
+    "joryeugene/dadbod-grip.nvim",
+    dir = "~/Documents/GitHub/dadbod-grip.nvim",
+  }
+<
+Keeping the GitHub repo string as the first field preserves lazy.nvim's plugin
+identity while loading files from your local checkout.
+
 SQL completion (nvim-cmp) is built in. No additional plugins required.
 To verify your setup after installation: >
   :checkhealth dadbod-grip
@@ -575,7 +594,7 @@ SCHEMA AND WORKFLOW ~
                                                           *grip-workflow*
   go / gT / gt    Table picker (fuzzy finder)
   gb              Schema browser (focus if open; close from inside)
-  gG              ER diagram float (all tables and FK relationships)
+  gG              ER diagram float (focused table neighborhood)
                   Press <CR> on a table header to open it in a grid.
                   Press q or gG again to close.
   gC / <C-g>      Switch database connection
@@ -897,13 +916,15 @@ table name to confirm.
 ==============================================================================
 16. ADAPTERS                                              *grip-adapters*
 
-Grip supports four database adapters. The adapter is selected automatically
+Grip supports five database adapters. The adapter is selected automatically
 based on the connection URL scheme.
 
   postgresql:// .... PostgreSQL via psql CLI
   sqlite: .......... SQLite via sqlite3 CLI
   mysql:// ......... MySQL/MariaDB via mysql CLI
   duckdb: .......... DuckDB via duckdb CLI
+  sqlserver:// ..... SQL Server via sqlcmd CLI (read-only grids)
+  mssql:// ......... SQL Server via sqlcmd CLI (alias)
 
 Each adapter implements: query, execute, get_primary_keys, get_column_info,
 get_foreign_keys, get_indexes, get_table_stats, list_tables, and explain.

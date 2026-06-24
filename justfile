@@ -30,6 +30,11 @@ seed-mysql:
     mysql -u root -e "CREATE DATABASE IF NOT EXISTS grip_test"
     mysql -u root grip_test < tests/seed_mysql.sql
 
+# Seed SQL Server test database (requires sqlcmd and a local SQL Server instance)
+seed-mssql:
+    sqlcmd -S "${MSSQL_SERVER:-localhost,1433}" -U "${MSSQL_USER:-sa}" -P "${MSSQL_PASSWORD}" -Q "IF DB_ID('grip_test') IS NULL CREATE DATABASE grip_test"
+    sqlcmd -S "${MSSQL_SERVER:-localhost,1433}" -U "${MSSQL_USER:-sa}" -P "${MSSQL_PASSWORD}" -d grip_test -i tests/seed_mssql.sql
+
 # Seed DuckDB test database
 seed-duckdb:
     rm -f tests/seed_duckdb.duckdb
@@ -47,7 +52,7 @@ seed-httpfs:
     echo "SELECT Species, round(avg(SepalLengthCm),2) as sepal, round(avg(PetalLengthCm),2) as petal, count(*) as n FROM 'https://huggingface.co/api/datasets/scikit-learn/iris/parquet/default/train/0.parquet' GROUP BY Species" > .grip/queries/iris-parquet.sql
     echo "SELECT userId, count(*) as total, sum(case when completed then 1 else 0 end) as done FROM 'https://duckdb.org/data/json/todos.json' GROUP BY userId ORDER BY done DESC" > .grip/queries/todos-json.sql
 
-# Seed all test databases
+# Seed all local test databases except SQL Server (requires MSSQL_PASSWORD)
 seed-all: seed-pg seed-sqlite seed-mysql seed-duckdb
 
 # Regenerate test databases from seed SQL
