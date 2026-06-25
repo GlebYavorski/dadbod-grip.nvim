@@ -258,6 +258,7 @@ function M.list_routines(url)
 
   local sql_str = [[
     SELECT
+      p.oid::text AS source_id,
       n.nspname AS schema,
       p.proname AS name,
       pg_get_function_identity_arguments(p.oid) AS identity_arguments,
@@ -279,10 +280,11 @@ function M.list_routines(url)
 
   local result = {}
   for _, row in ipairs(parsed.rows) do
-    local schema_name = row[1] or "public"
-    local routine_name = row[2] or ""
-    local args = row[3] or ""
-    local kind = row[4] or "function"
+    local source_id = row[1] or ""
+    local schema_name = row[2] or "public"
+    local routine_name = row[3] or ""
+    local args = row[4] or ""
+    local kind = row[5] or "function"
     local qualified = (schema_name == "public") and routine_name or (schema_name .. "." .. routine_name)
     table.insert(result, {
       name = qualified,
@@ -290,6 +292,7 @@ function M.list_routines(url)
       type = kind,
       schema = schema_name,
       arguments = args,
+      source_id = source_id,
     })
   end
   return result, nil
@@ -300,8 +303,17 @@ function M.get_routine_source(routine_name, url)
     return nil, "psql not found. Install postgresql-client."
   end
 
-  local schema, routine = split_routine_name(routine_name)
-  local sql_str = string.format([[
+  local sql_str
+  if tostring(routine_name):match("^%d+$") then
+    sql_str = string.format([[
+    SELECT pg_get_functiondef(p.oid) AS source
+    FROM pg_proc p
+    WHERE p.oid = %s::oid
+    LIMIT 1
+  ]], tostring(routine_name))
+  else
+    local schema, routine = split_routine_name(routine_name)
+    sql_str = string.format([[
     SELECT pg_get_functiondef(p.oid) AS source
     FROM pg_proc p
     JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -310,6 +322,7 @@ function M.get_routine_source(routine_name, url)
     ORDER BY p.oid
     LIMIT 1
   ]], schema:gsub("'", "''"), routine:gsub("'", "''"))
+  end
 
   local stdout, stderr, code = psql(url, sql_str)
   if code ~= 0 then

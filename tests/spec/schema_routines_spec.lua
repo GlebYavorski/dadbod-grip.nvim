@@ -22,8 +22,8 @@ test("build_nodes renders functions and procedures after tables", function()
       { type = "view", name = "active_users" },
     },
     routines = {
-      { type = "function", name = "user_display_name", display = "user_display_name(user_id integer)" },
-      { type = "procedure", name = "mark_order_status", display = "mark_order_status(order_id integer, new_status text)" },
+      { type = "function", name = "user_display_name", display = "user_display_name(user_id integer)", source_id = "12345" },
+      { type = "procedure", name = "mark_order_status", display = "mark_order_status(order_id integer, new_status text)", source_id = "23456" },
     },
     expanded = {},
     col_cache = {},
@@ -36,7 +36,10 @@ test("build_nodes renders functions and procedures after tables", function()
   local seen = {}
   for _, node in ipairs(nodes) do
     if node.kind == "header" then seen[node.text] = true end
-    if node.kind == "routine" then seen[node.type .. ":" .. node.name] = node.display end
+    if node.kind == "routine" then
+      seen[node.type .. ":" .. node.name] = node.display
+      seen[node.name .. ":source_id"] = node.source_id
+    end
   end
 
   assert(seen["Tables (1)"], "tables header rendered")
@@ -45,6 +48,8 @@ test("build_nodes renders functions and procedures after tables", function()
   assert(seen["Procedures (1)"], "procedures header rendered")
   assert(seen["function:user_display_name"] == "user_display_name(user_id integer)", "function node rendered")
   assert(seen["procedure:mark_order_status"] == "mark_order_status(order_id integer, new_status text)", "procedure node rendered")
+  assert(seen["user_display_name:source_id"] == "12345", "function source id is preserved")
+  assert(seen["mark_order_status:source_id"] == "23456", "procedure source id is preserved")
 end)
 
 test("build_nodes filters routines by name and display", function()

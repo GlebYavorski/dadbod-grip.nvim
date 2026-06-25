@@ -385,6 +385,7 @@ local function build_nodes(state)
           name = routine.name,
           display = routine.display or routine.name,
           type = routine.type or "function",
+          source_id = routine.source_id,
         })
       end
     end
@@ -666,7 +667,7 @@ local function setup_keymaps(url)
     elseif node.kind == "column" and node.table_name then
       open_table(node.table_name, url)
     elseif node.kind == "routine" then
-      open_routine_source(node.name, url)
+      open_routine_source(node.source_id or node.name, url)
     end
   end)
 
@@ -680,7 +681,7 @@ local function setup_keymaps(url)
     elseif node.kind == "column" and node.table_name then
       open_table_split(node.table_name, url)
     elseif node.kind == "routine" then
-      open_routine_source(node.name, url)
+      open_routine_source(node.source_id or node.name, url)
     end
   end)
 

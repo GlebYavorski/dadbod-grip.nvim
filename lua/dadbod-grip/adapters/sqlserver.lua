@@ -1,7 +1,6 @@
 -- adapters/sqlserver.lua: SQL Server adapter (sqlcmd CLI).
 -- Read-only grid support for v1. All functions return (result, err).
 
-local db_util = require("dadbod-grip.db")
 local adapters = require("dadbod-grip.adapters")
 local sql_util = require("dadbod-grip.sql")
 

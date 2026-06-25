@@ -248,9 +248,9 @@ end)
 test("pg list_routines: queries pg_proc and parses functions/procedures", function()
   with_executable(function()
     local csv = table.concat({
-      "schema,name,identity_arguments,kind",
-      "public,user_display_name,user_id integer,function",
-      "admin,audit_touch,,procedure",
+      "source_id,schema,name,identity_arguments,kind",
+      "12345,public,user_display_name,user_id integer,function",
+      "23456,admin,audit_touch,,procedure",
       "",
     }, "\n")
     local args = capture_system_args(csv, function()
@@ -260,6 +260,7 @@ test("pg list_routines: queries pg_proc and parses functions/procedures", functi
       eq(routines[1].name, "user_display_name", "public routine name is bare")
       eq(routines[1].display, "user_display_name(user_id integer)", "function display")
       eq(routines[1].type, "function", "function type")
+      eq(routines[1].source_id, "12345", "function source id")
       eq(routines[2].name, "admin.audit_touch", "non-public routine is schema-qualified")
       eq(routines[2].display, "admin.audit_touch()", "procedure display")
       eq(routines[2].type, "procedure", "procedure type")
@@ -267,6 +268,20 @@ test("pg list_routines: queries pg_proc and parses functions/procedures", functi
     local sql_arg = last_arg(args)
     contains(sql_arg, "pg_proc", "routine list queries pg_proc")
     contains(sql_arg, "pg_namespace", "routine list queries schemas")
+  end)
+end)
+
+test("pg get_routine_source: can select exact routine by oid source id", function()
+  with_executable(function()
+    local csv = "source\n\"CREATE OR REPLACE FUNCTION overloaded(value text)\nRETURNS text\nLANGUAGE sql\nAS $$ SELECT value; $$\"\n"
+    local source, err
+    local args = capture_system_args(csv, function()
+      source, err = pg.get_routine_source("98765", "postgresql://localhost/db")
+    end)
+    assert(not err, "should not error: " .. tostring(err))
+    contains(source, "overloaded(value text)", "source contains selected overload")
+    local sql_arg = last_arg(args)
+    contains(sql_arg, "p.oid = 98765::oid", "source query filters by oid")
   end)
 end)
 
