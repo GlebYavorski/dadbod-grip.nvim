@@ -971,6 +971,19 @@ function M._snap_col(vis_cols, bp_row, col_nr)
   return nil
 end
 
+--- Clamp a buffer line to the data-row range [data_start, data_start + #ordered - 1].
+--- The title/header/type/separator rows sit above this range and the footer/hint
+--- line sits below it; visual-mode navigation reuses this so `G`/`j`/`k` stop at the
+--- last data row instead of overshooting onto the footer (issue #20). Pure/testable.
+function M._clamp_data_line(r, line)
+  local ds = r.data_start or 4
+  local last = ds + #r.ordered - 1
+  if last < ds then last = ds end  -- empty result set: collapse to data_start
+  if line < ds then return ds end
+  if line > last then return last end
+  return line
+end
+
 -- ── badge helpers ────────────────────────────────────────────────────────
 
 --- Update the winbar badge for watch/write mode indicators.
@@ -2178,6 +2191,24 @@ function M._setup_keymaps(bufnr)
     end
     return rows
   end
+
+  -- Visual gg/G/j/k: clamp selection to the data-row range so it stops at the
+  -- last data row instead of overshooting onto the separator/footer/hint line
+  -- (issue #20). Mirrors the normal-mode clamps; like them, it ignores counts.
+  local function visual_nav(target_fn)
+    return function()
+      local session = M._sessions[bufnr]
+      if not session or not session._render then return end
+      local r = session._render
+      local cursor = vim.api.nvim_win_get_cursor(0)
+      local target = M._clamp_data_line(r, target_fn(r, cursor[1]))
+      vim.api.nvim_win_set_cursor(0, { target, cursor[2] })
+    end
+  end
+  vmap("gg", visual_nav(function() return 0 end), "First data row (visual)")
+  vmap("G", visual_nav(function() return math.huge end), "Last data row (visual)")
+  vmap("j", visual_nav(function(_, line) return line + 1 end), "Down, clamped to data rows")
+  vmap("k", visual_nav(function(_, line) return line - 1 end), "Up, clamped to data rows")
 
   -- Visual e: batch edit (set all selected cells in column to same value)
   kvmap("grid_v_edit", function()
