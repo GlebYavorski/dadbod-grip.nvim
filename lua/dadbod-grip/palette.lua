@@ -91,6 +91,7 @@ local function _build_actions()
 
     -- ── Grid: editing ─────────────────────────────────────────────────────
     act("[grid]     Edit cell",              k("grid_edit"),        "Open inline cell editor",                                     { "grid" }),
+    act("[grid]     Open cell in buffer",    k("grid_cell_buffer"), "Open cell value in a split buffer (:w stages the change)",    { "grid" }),
     act("[grid]     Set cell NULL",          k("grid_null"),        "Set the cell under cursor to NULL",                           { "grid" }),
     act("[grid]     Insert new row",         k("grid_insert"),      "Add a blank row (staged INSERT)",                             { "grid" }),
     act("[grid]     Clone row",              k("grid_clone"),       "Copy row with PKs cleared (staged INSERT)",                   { "grid" }),

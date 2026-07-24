@@ -266,6 +266,7 @@ local function is_editable(session)
     and session.file_path ~= nil
     and not session.file_path:match("^https?://")
 end
+M._is_editable = is_editable  -- exposed for cell_buffer.lua
 
 -- Build the title bar with connection/table info and staged count.
 local function title_line(session, columns, widths, total_width)
@@ -2680,6 +2681,11 @@ function M._setup_keymaps(bufnr)
     end
   end, "Row view")
 
+  -- gB: open cell value in a full split buffer (large JSON, long text)
+  kmap("grid_cell_buffer", function()
+    require("dadbod-grip.cell_buffer").open(bufnr)
+  end, "Open cell in buffer")
+
   -- K (visual): stack-inspect multiple selected rows in one float.
   -- Each row becomes a labeled block separated by a blank line.
   -- 1 row selected → same float as normal K. N rows → stacked blocks.
@@ -4850,6 +4856,7 @@ function M.show_help(opts)
       "  e         Next column, land at end of cell",
       "  {/}       Prev / next modified row",
       "  <CR> / i  Edit cell under cursor (JSON cells: pretty-printed in editor)",
+      "  gB        Open cell value in split buffer (JSON: ft=json; :w stages)",
       "  K         Row view (vertical transpose; JSON cells auto-expanded)",
       "  y         Yank cell value to clipboard",
       "  Y         Yank row as CSV",
@@ -4965,6 +4972,7 @@ function M.show_help(opts)
         "",
         "  Editing",
         "  <CR> / i  Edit cell under cursor",
+        "  gB        Open cell value in split buffer (:w stages the change)",
         "  x         Set cell to NULL",
         "  p         Paste clipboard into cell",
         "  P         Paste multi-line into rows",

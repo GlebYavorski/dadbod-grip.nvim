@@ -26,6 +26,9 @@ local OPTS = {
   picker      = "builtin",
   pinned_max  = nil,
   border      = "rounded",
+  -- Split style for the full-buffer cell editor (gB): "horizontal" opens a
+  -- ~40%-height split below the grid, "vertical" a ~40%-width split.
+  cell_split  = "horizontal",
   -- Auto-discover local Docker containers tagged with the
   -- dev.localdb.* label set. See sources/docker_localdb.lua. Set false
   -- to disable shelling out to `docker ps` on picker open.
@@ -39,7 +42,8 @@ function M.get_opts()
            timeout = OPTS.timeout, completion = OPTS.completion,
            connections_path = OPTS.connections_path,
            picker = OPTS.picker, pinned_max = OPTS.pinned_max,
-           border = OPTS.border, discovery = OPTS.discovery }
+           border = OPTS.border, discovery = OPTS.discovery,
+           cell_split = OPTS.cell_split }
 end
 
 -- ── helpers ───────────────────────────────────────────────────────────────
@@ -1536,6 +1540,7 @@ end
 ---@field keymaps? table         Key overrides: { action_name = "key" } or { action_name = false }
 ---@field pinned_max? integer    Max number of pinned results allowed (nil = unlimited)
 ---@field border? string|table   Float window border style (default: "rounded")
+---@field cell_split? string     Cell buffer (gB) split style: "horizontal"|"vertical"
 
 ---Setup dadbod-grip with user options.
 ---@param opts? DadbodGripOpts
@@ -1554,6 +1559,9 @@ function M.setup(opts)
     keymaps       = { opts.keymaps,        "table",   true },
     pinned_max    = { opts.pinned_max,     "number",  true },
     border        = { opts.border, function(v) return v == nil or type(v) == "string" or type(v) == "table" end, "string, table, or nil" },
+    cell_split    = { opts.cell_split, function(v)
+      return v == nil or v == "horizontal" or v == "vertical"
+    end, '"horizontal" or "vertical"' },
     discovery     = { opts.discovery, "boolean", true },
   })
   OPTS.limit        = opts.limit        or 100
@@ -1564,6 +1572,7 @@ function M.setup(opts)
   OPTS.picker = opts.picker or "builtin"
   if opts.pinned_max ~= nil then OPTS.pinned_max = opts.pinned_max end
   if opts.border ~= nil then OPTS.border = opts.border end
+  OPTS.cell_split = opts.cell_split or "horizontal"
   if opts.discovery ~= nil then OPTS.discovery = opts.discovery end
 
   -- Keymap overrides: stored at module level for keymaps.get() to read.
