@@ -37,7 +37,7 @@ A command palette (`<C-p>`) surfaces every action without memorizing keymaps. Th
 | **SQL formatter** `gF` sql-formatter · pg_format · Lua fallback | **Query Doctor** plain-English EXPLAIN | **DDL** create · rename · drop via UI |
 | **SQL syntax highlighting** query pad with treesitter | **Visual staging** violet · green · red rows | **File as table** Parquet · CSV · JSON · remote URLs |
 | **Local Files picker** open CSV/JSON/Parquet from cwd without typing a path | **Live SQL preview** float updates as you stage | **AI SQL** Anthropic · OpenAI · Gemini · Ollama |
-| **Inline cell editing** popup with Vim normal mode (`<Esc>`) | **Data diff** `gD` compare tables by primary key | **Multi-DB** PostgreSQL · SQLite · MySQL · DuckDB · MotherDuck |
+| **Inline cell editing** popup with Vim normal mode (`<Esc>`) | **Data diff** `gD` compare tables by primary key | **Multi-DB** PostgreSQL · SQLite · MySQL · DuckDB · MotherDuck · SQL Server (read-only) |
 | **Mutation preview** full SQL before apply | **Column filter builder** `gF` with operators and wildcards | **Schema grouping** sidebar sections per attached database |
 | **Cross-DB federation** `:GripAttach` Postgres · MySQL · SQLite · MotherDuck | **Export** CSV · TSV · JSON · SQL · Markdown · Table | **Connection health** `T` tests all connection types |
 | **Surface nav** `1`-`3` sidebar · query pad · grid | **ER diagram** `4` tree-spine layout with FK follow | **Remappable keymaps** override or disable any key via `setup()` |
@@ -108,6 +108,8 @@ require("dadbod-grip").setup({ discovery = false })
 ```
 postgresql://user:pass@host:5432/dbname
 mysql://user:pass@host:3306/dbname
+sqlserver://user:pass@host:1433/dbname
+mssql://user:pass@host:1433/dbname
 sqlite:path/to/file.db
 duckdb:path/to/file.duckdb
 
@@ -204,7 +206,7 @@ work without credentials.
 - **Demo notebook**: `:GripStart` loads `demo/softrear-internal.md` automatically — sixteen sections of a data quality investigation, runnable block by block.
 
 ### Schema and Workflow
-- **ER diagram** via `gG` or `4`: a tree-spine float showing every table with PK/FK/column summary, arranged by FK depth with box-drawing connectors. Press `<CR>` on any table to open its grid. Press `f` to follow a foreign key and `H` to go back (breadcrumb trail updates). `Tab`/`S-Tab` cycle between tables. Press `gG` or `q` to close. Column names truncate gracefully; overflow columns show a right-aligned `+N` count. Works from the grid, the query pad, and the schema sidebar.
+- **ER diagram** via `gG` or `4`: a tree-spine float showing tables with PK/FK/column summary, arranged by FK depth with box-drawing connectors. `4` opens the full map; `gG` from a table context focuses that table plus direct parents and children. Press `<CR>` on any table to open its grid. Press `f` to follow a foreign key and `H` to go back (breadcrumb trail updates). `Tab`/`S-Tab` cycle between tables. Press `gG` or `q` to close. Column names truncate gracefully; overflow columns show a right-aligned `+N` count. Works from the grid, the query pad, and the schema sidebar.
 - **Schema browser** via `:GripSchema` or `gb` showing a sidebar tree with columns, types, and PK/FK markers. `gb` opens/focuses the browser from any buffer; pressing `gb` from inside closes it.
 - **Table picker** via `:GripTables` or `gT` / `gt` providing a fuzzy finder with column preview. Available from all three buffers: grid, query pad, and sidebar. In the sidebar, `go` opens the table under cursor with `ORDER BY created_at / PK DESC` so the latest rows appear first.
 - **SQL query pad** via `:GripQuery` or `q`. A persistent scratch buffer that pipes results into editable grids. Clicking a table in the sidebar or picker never replaces pad content: new queries append below existing SQL with a blank separator so all your work stays intact. `<C-CR>` runs the visual selection or the full buffer; when cursor is inside a `` ```sql ``` `` fence, only that block runs. `gn` opens the notebook picker to load any `.md` or `.sql` file. `gA` reads existing pad content and modifies it rather than generating from scratch. Pressing `q` or `2` focuses the pad without overwriting anything.
@@ -503,12 +505,15 @@ Note: explain query plan is at `gQ` (Query Doctor).
   - **SQLite**: `sqlite3`
   - **MySQL/MariaDB**: `mysql` (auto-detects MariaDB and uses `--batch` output)
   - **DuckDB**: `duckdb`
+  - **SQL Server**: `sqlcmd` (read-only grid support in v1)
 
 ## Install
 
 ### lazy.nvim (recommended)
 
 The plugin ships a `lazy.lua` spec so all commands work as lazy-load triggers automatically.
+You do not need to copy a `cmd = { ... }` list into your config; leaving it out
+prevents stale command lists when new `:Grip*` commands are added.
 
 `version = "*"` tracks the latest stable release tag. Omit it to track HEAD (rolling).
 
@@ -518,6 +523,18 @@ The plugin ships a `lazy.lua` spec so all commands work as lazy-load triggers au
   version = "*",   -- always latest stable; remove to track HEAD
 }
 ```
+
+**Local checkout for development/testing:**
+
+```lua
+{
+  "joryeugene/dadbod-grip.nvim",
+  dir = "~/Documents/GitHub/dadbod-grip.nvim",
+}
+```
+
+Keeping the GitHub repo string as the first field preserves lazy.nvim's plugin
+identity while loading files from your local checkout.
 
 **With keymaps** (recommended):
 

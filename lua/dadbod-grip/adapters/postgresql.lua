@@ -28,6 +28,16 @@ local function psql(url, sql_str, timeout_ms)
   )
 end
 
+local function split_routine_name(routine_name)
+  local name = (routine_name or ""):gsub("%s*%b()%s*$", "")
+  local schema, routine = name:match("^([^.]+)%.(.+)$")
+  if not schema then
+    schema = "public"
+    routine = name
+  end
+  return sql_util.unquote_ident(schema), sql_util.unquote_ident(routine)
+end
+
 function M.query(sql_str, url)
   if vim.fn.executable("psql") == 0 then
     return nil, "psql not found. Install postgresql-client."
@@ -239,6 +249,92 @@ function M.list_tables(url)
     table.insert(result, { name = row[1] or "", type = row[2] or "table" })
   end
   return result, nil
+end
+
+function M.list_routines(url)
+  if vim.fn.executable("psql") == 0 then
+    return nil, "psql not found. Install postgresql-client."
+  end
+
+  local sql_str = [[
+    SELECT
+      p.oid::text AS source_id,
+      n.nspname AS schema,
+      p.proname AS name,
+      pg_get_function_identity_arguments(p.oid) AS identity_arguments,
+      CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END AS kind
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND p.prokind IN ('f', 'p')
+    ORDER BY n.nspname, kind, p.proname, identity_arguments
+  ]]
+
+  local stdout, stderr, code = psql(url, sql_str)
+  if code ~= 0 then
+    return nil, stderr ~= "" and stderr or "Failed to list routines"
+  end
+
+  local parsed = db_util.parse_csv(stdout)
+  if not parsed then return nil, "Failed to parse routine list" end
+
+  local result = {}
+  for _, row in ipairs(parsed.rows) do
+    local source_id = row[1] or ""
+    local schema_name = row[2] or "public"
+    local routine_name = row[3] or ""
+    local args = row[4] or ""
+    local kind = row[5] or "function"
+    local qualified = (schema_name == "public") and routine_name or (schema_name .. "." .. routine_name)
+    table.insert(result, {
+      name = qualified,
+      display = qualified .. "(" .. args .. ")",
+      type = kind,
+      schema = schema_name,
+      arguments = args,
+      source_id = source_id,
+    })
+  end
+  return result, nil
+end
+
+function M.get_routine_source(routine_name, url)
+  if vim.fn.executable("psql") == 0 then
+    return nil, "psql not found. Install postgresql-client."
+  end
+
+  local sql_str
+  if tostring(routine_name):match("^%d+$") then
+    sql_str = string.format([[
+    SELECT pg_get_functiondef(p.oid) AS source
+    FROM pg_proc p
+    WHERE p.oid = %s::oid
+    LIMIT 1
+  ]], tostring(routine_name))
+  else
+    local schema, routine = split_routine_name(routine_name)
+    sql_str = string.format([[
+    SELECT pg_get_functiondef(p.oid) AS source
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = '%s'
+      AND p.proname = '%s'
+    ORDER BY p.oid
+    LIMIT 1
+  ]], schema:gsub("'", "''"), routine:gsub("'", "''"))
+  end
+
+  local stdout, stderr, code = psql(url, sql_str)
+  if code ~= 0 then
+    return nil, stderr ~= "" and stderr or "Failed to get routine source"
+  end
+
+  local parsed = db_util.parse_csv(stdout)
+  if not parsed or not parsed.rows[1] or not parsed.rows[1][1] or parsed.rows[1][1] == "" then
+    return nil, "Routine not found: " .. routine_name
+  end
+
+  return parsed.rows[1][1], nil
 end
 
 function M.get_indexes(table_name, url)

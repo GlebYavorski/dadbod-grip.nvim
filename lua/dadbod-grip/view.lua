@@ -4751,7 +4751,8 @@ function M._setup_keymaps(bufnr)
       vim.notify("ER Diagram: no database connection", vim.log.levels.WARN)
       return
     end
-    require("dadbod-grip.er_diagram").toggle(s_url)
+    local focus_table = session and session.state and session.state.table_name
+    require("dadbod-grip.er_diagram").toggle(s_url, focus_table, { focus = focus_table ~= nil })
   end, "ER diagram (FK relationships)")
 
   -- ?: help popup
@@ -4906,7 +4907,7 @@ function M.show_help(opts)
       "  Schema & Workflow",
       "  go/gT/gt  Pick table (floating picker)",
       "  gb        Schema browser (toggle/focus)",
-      "  gG        ER diagram: every table as a box, every FK as an arrow",
+      "  gG        ER diagram: focus current table neighborhood",
       "            ↳ <CR> on a table header to open that table",
       "            ↳ press gG again from the grid to return to the map",
       "  gO        Open as editable table (read-only → table)",

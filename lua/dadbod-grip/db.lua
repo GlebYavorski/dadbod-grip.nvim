@@ -274,6 +274,29 @@ function M.get_constraints(table_name, url)
   return adapter.get_constraints(table_name, conn)
 end
 
+--- Returns true when an adapter intentionally exposes read-only grids.
+function M.is_readonly(url)
+  local adapter = resolve(url)
+  return adapter and adapter.readonly == true or false
+end
+
+--- List database routines for schema browsers.
+--- Returns { {name, display, type}, ... }. Unsupported adapters return empty.
+function M.list_routines(url)
+  local adapter, conn, err = resolve(url)
+  if not adapter then return {}, err end
+  if not adapter.list_routines then return {}, nil end
+  return adapter.list_routines(conn)
+end
+
+--- Fetch a routine's source/definition text. Unsupported adapters return an error.
+function M.get_routine_source(routine_name, url)
+  local adapter, conn, err = resolve(url)
+  if not adapter then return nil, err end
+  if not adapter.get_routine_source then return nil, "Adapter does not support routine source" end
+  return adapter.get_routine_source(routine_name, conn)
+end
+
 --- Describe the columns of a local/remote file via DuckDB DESCRIBE.
 --- Returns (cols, nil) on success where cols = { {column_name, data_type} }.
 --- Returns (nil, err_string) on failure.

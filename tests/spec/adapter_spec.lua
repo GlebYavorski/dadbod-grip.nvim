@@ -3,6 +3,8 @@ local mysql = require("dadbod-grip.adapters.mysql")
 local sqlite = require("dadbod-grip.adapters.sqlite")
 local duckdb = require("dadbod-grip.adapters.duckdb")
 local pg = require("dadbod-grip.adapters.postgresql")
+local adapters = require("dadbod-grip.adapters")
+local sqlserver = require("dadbod-grip.adapters.sqlserver")
 
 -- Pre-seed MariaDB cache to prevent vim.fn.system calls during tests.
 -- Individual MariaDB-specific tests override this explicitly.
@@ -241,6 +243,64 @@ test("pg ping: passes -X to skip .psqlrc", function()
   end)
 end)
 
+-- ── PostgreSQL routines ─────────────────────────────────────────────────
+
+test("pg list_routines: queries pg_proc and parses functions/procedures", function()
+  with_executable(function()
+    local csv = table.concat({
+      "source_id,schema,name,identity_arguments,kind",
+      "12345,public,user_display_name,user_id integer,function",
+      "23456,admin,audit_touch,,procedure",
+      "",
+    }, "\n")
+    local args = capture_system_args(csv, function()
+      local routines, err = pg.list_routines("postgresql://localhost/db")
+      assert(not err, "should not error: " .. tostring(err))
+      eq(#routines, 2, "routine count")
+      eq(routines[1].name, "user_display_name", "public routine name is bare")
+      eq(routines[1].display, "user_display_name(user_id integer)", "function display")
+      eq(routines[1].type, "function", "function type")
+      eq(routines[1].source_id, "12345", "function source id")
+      eq(routines[2].name, "admin.audit_touch", "non-public routine is schema-qualified")
+      eq(routines[2].display, "admin.audit_touch()", "procedure display")
+      eq(routines[2].type, "procedure", "procedure type")
+    end)
+    local sql_arg = last_arg(args)
+    contains(sql_arg, "pg_proc", "routine list queries pg_proc")
+    contains(sql_arg, "pg_namespace", "routine list queries schemas")
+  end)
+end)
+
+test("pg get_routine_source: can select exact routine by oid source id", function()
+  with_executable(function()
+    local csv = "source\n\"CREATE OR REPLACE FUNCTION overloaded(value text)\nRETURNS text\nLANGUAGE sql\nAS $$ SELECT value; $$\"\n"
+    local source, err
+    local args = capture_system_args(csv, function()
+      source, err = pg.get_routine_source("98765", "postgresql://localhost/db")
+    end)
+    assert(not err, "should not error: " .. tostring(err))
+    contains(source, "overloaded(value text)", "source contains selected overload")
+    local sql_arg = last_arg(args)
+    contains(sql_arg, "p.oid = 98765::oid", "source query filters by oid")
+  end)
+end)
+
+test("pg get_routine_source: uses pg_get_functiondef and preserves source text", function()
+  with_executable(function()
+    local csv = "source\n\"CREATE OR REPLACE FUNCTION user_display_name(user_id integer)\nRETURNS text\nLANGUAGE sql\nAS $$ SELECT 'user'; $$\"\n"
+    local source, err
+    local args = capture_system_args(csv, function()
+      source, err = pg.get_routine_source("user_display_name", "postgresql://localhost/db")
+    end)
+    assert(not err, "should not error: " .. tostring(err))
+    contains(source, "CREATE OR REPLACE FUNCTION", "source contains function DDL")
+    contains(source, "RETURNS text", "source preserves multiline body")
+    local sql_arg = last_arg(args)
+    contains(sql_arg, "pg_get_functiondef", "source query uses pg_get_functiondef")
+    contains(sql_arg, "user_display_name", "source query filters by routine")
+  end)
+end)
+
 -- ── SQLite .sqliterc bypass ─────────────────────────────────────────────
 
 test("sqlite query: passes -init '' to skip .sqliterc", function()
@@ -249,6 +309,99 @@ test("sqlite query: passes -init '' to skip .sqliterc", function()
       sqlite.query("SELECT 1", "sqlite:test.db")
     end)
     has_arg(args, "-init", "query should pass -init")
+  end)
+end)
+
+-- ── SQL Server adapter ───────────────────────────────────────────────────
+
+test("adapter registry resolves sqlserver and mssql URLs", function()
+  local a1, err1 = adapters.resolve("sqlserver://sa:pw@localhost:1433/grip_test")
+  assert(a1 == sqlserver, "sqlserver adapter mismatch: " .. tostring(err1))
+  local a2, err2 = adapters.resolve("mssql://sa:pw@localhost/grip_test")
+  assert(a2 == sqlserver, "mssql adapter mismatch: " .. tostring(err2))
+end)
+
+test("sqlserver parse_url: full URL parses all fields", function()
+  local r = sqlserver._parse_url("sqlserver://sa:secret@db.host:14330/grip_test")
+  eq(r.user, "sa", "user")
+  eq(r.pass, "secret", "pass")
+  eq(r.host, "db.host", "host")
+  eq(r.port, "14330", "port")
+  eq(r.dbname, "grip_test", "dbname")
+end)
+
+test("sqlserver query: parses sqlcmd tab output", function()
+  with_executable(function()
+    local out = table.concat({
+      "id\tname",
+      "--\t----",
+      "1\tAlice",
+      "2\tNULL",
+      "",
+      "(2 rows affected)",
+      "",
+    }, "\n")
+    with_system_mock(out, "", 0, function()
+      local result, err = sqlserver.query("SELECT id, name FROM users", "sqlserver://sa:pw@localhost/grip_test")
+      assert(not err, "should not error: " .. tostring(err))
+      eq(result.columns[1], "id", "first column")
+      eq(result.columns[2], "name", "second column")
+      eq(result.rows[1][2], "Alice", "first row value")
+      eq(result.rows[2][2], "", "NULL becomes empty string")
+    end)
+  end)
+end)
+
+test("sqlserver query: builds sqlcmd args for non-interactive use", function()
+  with_executable(function()
+    local args = capture_system_args("id\n--\n1\n", function()
+      sqlserver.query("SELECT 1", "sqlserver://sa:pw@localhost:1433/grip_test")
+    end)
+    has_arg(args, "sqlcmd", "uses sqlcmd")
+    has_arg(args, "-S", "sets server")
+    has_arg(args, "-d", "sets database")
+    has_arg(args, "-U", "sets user")
+    has_arg(args, "-P", "sets password")
+    has_arg(args, "-Q", "sets query")
+  end)
+end)
+
+test("sqlserver list_tables: parses table and view rows", function()
+  with_executable(function()
+    local out = table.concat({
+      "table_name\ttable_type",
+      "----------\t----------",
+      "users\ttable",
+      "no_pk_view\tview",
+      "",
+    }, "\n")
+    with_system_mock(out, "", 0, function()
+      local result, err = sqlserver.list_tables("sqlserver://sa:pw@localhost/grip_test")
+      assert(not err, "should not error: " .. tostring(err))
+      eq(#result, 2, "two objects")
+      eq(result[1].name, "users", "table name")
+      eq(result[1].type, "table", "table type")
+      eq(result[2].type, "view", "view type")
+    end)
+  end)
+end)
+
+test("sqlserver get_primary_keys: parses key columns", function()
+  with_executable(function()
+    local out = table.concat({
+      "column_name",
+      "-----------",
+      "tenant_id",
+      "user_id",
+      "",
+    }, "\n")
+    with_system_mock(out, "", 0, function()
+      local result, err = sqlserver.get_primary_keys("composite_pk", "sqlserver://sa:pw@localhost/grip_test")
+      assert(not err, "should not error: " .. tostring(err))
+      eq(#result, 2, "two primary key columns")
+      eq(result[1], "tenant_id", "first pk")
+      eq(result[2], "user_id", "second pk")
+    end)
   end)
 end)
 

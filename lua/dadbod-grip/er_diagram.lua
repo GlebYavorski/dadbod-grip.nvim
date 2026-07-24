@@ -153,7 +153,7 @@ end
 --- Does NOT build lines; caller does alignment pass after.
 --- col_sums: pre-computed {tbl → summary string} with per-slot widths applied.
 local function collect_subtree(t, line_prefix, is_root, is_last,
-                                children_of, entries, visited, col_sums)
+                                children_of, entries, visited, col_sums, focus_table)
   if visited[t] then return end
   visited[t] = true
 
@@ -162,6 +162,7 @@ local function collect_subtree(t, line_prefix, is_root, is_last,
 
   table.insert(entries, {
     name        = t,
+    label       = (focus_table and t == focus_table) and (t .. " (FOCUS)") or t,
     name_prefix = name_prefix,
     col_sum     = col_sums[t] or "",
   })
@@ -178,7 +179,7 @@ local function collect_subtree(t, line_prefix, is_root, is_last,
   local kids = children_of[t] or {}
   for i, kid in ipairs(kids) do
     collect_subtree(kid, child_prefix, false, i == #kids,
-                    children_of, entries, visited, col_sums)
+                    children_of, entries, visited, col_sums, focus_table)
   end
 end
 
@@ -192,7 +193,7 @@ end
 ---
 --- Column summaries are aligned: all column annotations start at the same
 --- display column, regardless of tree prefix depth or table name length.
-local function build_content(url)
+local function build_content(url, focus_table)
   local schema_mod = require("dadbod-grip.schema")
   local db         = require("dadbod-grip.db")
   local state      = schema_mod.get_state(url)
@@ -234,6 +235,36 @@ local function build_content(url)
         fk_map[fk.column or fk.column_name] = fk.ref_table or fk.foreign_table_name
       end
       state.fk_cache[tbl] = fk_map
+    end
+  end
+
+  -- Focus mode keeps the selected table, direct FK parents, and direct FK
+  -- children. Missing focus names gracefully fall back to the full diagram.
+  local active_focus = nil
+  if focus_table and focus_table ~= "" then
+    local table_set = {}
+    for _, t in ipairs(tables) do table_set[t] = true end
+    if table_set[focus_table] then
+      local keep = { [focus_table] = true }
+      for _, ref in pairs(state.fk_cache[focus_table] or {}) do
+        if table_set[ref] then keep[ref] = true end
+      end
+      for _, t in ipairs(tables) do
+        for _, ref in pairs(state.fk_cache[t] or {}) do
+          if ref == focus_table then
+            keep[t] = true
+          end
+        end
+      end
+
+      local focused_tables = {}
+      for _, t in ipairs(tables) do
+        if keep[t] then table.insert(focused_tables, t) end
+      end
+      if #focused_tables > 0 then
+        tables = focused_tables
+        active_focus = focus_table
+      end
     end
   end
 
@@ -306,7 +337,7 @@ local function build_content(url)
   for ri, root in ipairs(roots) do
     local entries = {}
     collect_subtree(root, "", true, ri == #roots,
-                    children_of, entries, visited, col_sums)
+                    children_of, entries, visited, col_sums, active_focus)
     table.insert(root_entries, entries)
   end
 
@@ -314,6 +345,7 @@ local function build_content(url)
   for _, t in ipairs(isolated) do
     table.insert(iso_entries, {
       name        = t,
+      label       = (active_focus and t == active_focus) and (t .. " (FOCUS)") or t,
       name_prefix = "  ",
       col_sum     = col_sums[t] or "",
     })
@@ -324,7 +356,7 @@ local function build_content(url)
   local align_col = 0
   local function measure(entries)
     for _, e in ipairs(entries) do
-      local w = dw(e.name_prefix .. e.name)
+      local w = dw(e.name_prefix .. (e.label or e.name))
       if w > align_col then align_col = w end
     end
   end
@@ -340,7 +372,7 @@ local function build_content(url)
 
   local function emit_entries(entries)
     for _, e in ipairs(entries) do
-      local name_part = e.name_prefix .. e.name
+      local name_part = e.name_prefix .. (e.label or e.name)
       local pad       = string.rep(" ", align_col - dw(name_part))
       local line      = e.col_sum ~= "" and (name_part .. pad .. e.col_sum)
                                         or  name_part
@@ -356,7 +388,11 @@ local function build_content(url)
 
   -- Line 1: title
   local short_url = url:match("[^/\\]+$") or url
-  table.insert(out_lines, "  gG · ER Diagram · " .. short_url)
+  if active_focus then
+    table.insert(out_lines, "  gG · ER Diagram · Focus: " .. active_focus .. " · " .. short_url)
+  else
+    table.insert(out_lines, "  gG · ER Diagram · " .. short_url)
+  end
   line_to_node[#out_lines] = { kind = "title" }
 
   -- Line 2: breadcrumb placeholder (updated dynamically by 'f' / 'h')
@@ -443,7 +479,8 @@ end
 --- Show the ER diagram float for the given database URL.
 --- @param url      string
 --- @param scroll_to? string  optional table name to place cursor on after open
-function M.show(url, scroll_to)
+--- @param opts? table optional { focus = true } to render direct relationships only
+function M.show(url, scroll_to, opts)
   if not url or url == "" then
     vim.notify("ER Diagram: no database connection", vim.log.levels.WARN)
     return
@@ -451,8 +488,9 @@ function M.show(url, scroll_to)
 
   if is_open() then close_er() end
 
+  local focus_table = opts and opts.focus and scroll_to or nil
   local lines, _, line_to_node, table_lines = ui.blocking("Building ER diagram...", function()
-    return build_content(url)
+    return build_content(url, focus_table)
   end)
 
   -- Compute content width, then right-align +N to that edge
@@ -653,11 +691,12 @@ end
 --- Toggle the ER diagram float (close if open, show if closed).
 --- @param url      string
 --- @param scroll_to? string  optional table name to place cursor on
-function M.toggle(url, scroll_to)
+--- @param opts? table optional { focus = true } to render direct relationships only
+function M.toggle(url, scroll_to, opts)
   if is_open() then
     close_er()
   else
-    M.show(url, scroll_to)
+    M.show(url, scroll_to, opts)
   end
 end
 

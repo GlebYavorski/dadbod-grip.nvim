@@ -22,6 +22,10 @@ DROP TABLE IF EXISTS composite_pk CASCADE;
 DROP VIEW  IF EXISTS no_pk_view CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 DROP TYPE  IF EXISTS mood CASCADE;
+DROP SCHEMA IF EXISTS admin CASCADE;
+DROP FUNCTION IF EXISTS user_display_name(integer) CASCADE;
+DROP FUNCTION IF EXISTS recent_orders(integer) CASCADE;
+DROP PROCEDURE IF EXISTS mark_order_status(integer, text) CASCADE;
 
 -- ── users ────────────────────────────────────────────────────────────────
 -- Normal CRUD: varchar, integer, timestamp, email. 15 rows for sort/filter.
@@ -377,5 +381,49 @@ INSERT INTO long_values (label, body) VALUES
    '<script>alert("xss")</script><b>bold</b>&amp;'),
   ('newlines_only',
    E'\n\n\n');
+
+-- ── routines ─────────────────────────────────────────────────────────────
+-- PostgreSQL functions/procedures for schema routine browsing.
+CREATE FUNCTION user_display_name(user_id integer)
+RETURNS text
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT COALESCE(name || ' <' || email || '>', name, email, 'unknown')
+  FROM users
+  WHERE id = user_id
+$$;
+
+CREATE FUNCTION recent_orders(limit_count integer DEFAULT 5)
+RETURNS TABLE(order_id integer, customer text, total numeric, status text)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT o.id, u.name, o.total, o.status
+  FROM orders o
+  JOIN users u ON u.id = o.user_id
+  ORDER BY o.ordered_at DESC, o.id DESC
+  LIMIT limit_count
+$$;
+
+CREATE PROCEDURE mark_order_status(order_id integer, new_status text)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  UPDATE orders
+  SET status = new_status
+  WHERE id = order_id;
+END;
+$$;
+
+CREATE SCHEMA admin;
+
+CREATE FUNCTION admin.audit_touch()
+RETURNS text
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT 'audit touched'
+$$;
 
 COMMIT;

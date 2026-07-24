@@ -39,6 +39,8 @@ local SCHEME_MAP = {
   ["mysql://"]      = "dadbod-grip.adapters.mysql",
   ["mariadb://"]    = "dadbod-grip.adapters.mysql",
   ["duckdb:"]       = "dadbod-grip.adapters.duckdb",
+  ["sqlserver://"]  = "dadbod-grip.adapters.sqlserver",
+  ["mssql://"]      = "dadbod-grip.adapters.sqlserver",
 }
 
 --- Resolve the adapter module for a given connection URL.
