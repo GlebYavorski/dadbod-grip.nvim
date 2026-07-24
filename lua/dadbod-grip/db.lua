@@ -18,6 +18,32 @@ function M.get_url(url)
   return nil, "No database connection. Use :GripConnect or set vim.g.db."
 end
 
+--- Group flat referencing-FK rows into one entry per constraint.
+--- entries: { {table, column, ref_column, key}, ... } where key identifies the
+--- constraint (e.g. child_table + constraint_name). Rows sharing a key are a
+--- composite FK: collapsed to one entry with comma-joined columns and
+--- composite = true. Shared by pg/mysql/duckdb reverse-FK adapters.
+function M.group_referencing_fks(entries)
+  local refs, index = {}, {}
+  for _, e in ipairs(entries) do
+    local key = e.table .. "\0" .. (e.key or "")
+    local entry = index[key]
+    if entry then
+      -- Composite FK: kcu×ccu joins can produce duplicate column pairs; dedupe.
+      if not entry.composite or not entry.column:find(e.column, 1, true) then
+        entry.column = entry.column .. "," .. e.column
+        entry.ref_column = entry.ref_column .. "," .. e.ref_column
+      end
+      entry.composite = true
+    else
+      entry = { table = e.table, column = e.column, ref_column = e.ref_column }
+      index[key] = entry
+      table.insert(refs, entry)
+    end
+  end
+  return refs
+end
+
 --- Parse CSV output into rows + columns.
 --- Handles multiline quoted fields (RFC 4180).
 --- Shared by all adapters that use CSV CLI output.
@@ -226,6 +252,41 @@ function M.list_tables(url)
   if not adapter then return nil, err end
   if not adapter.list_tables then return nil, "Adapter does not support list_tables" end
   return adapter.list_tables(conn)
+end
+
+--- Reverse FK lookup: which tables have FKs pointing at table_name?
+--- Returns { {table, column, ref_column, composite?}, ... }, err.
+--- Adapters with a single-query implementation (postgres, mysql, sqlite,
+--- duckdb) are preferred; otherwise falls back to scanning every table's
+--- forward FKs via list_tables + get_foreign_keys (composite FKs are not
+--- detectable in the fallback: entries stay per-column).
+function M.get_referencing_foreign_keys(table_name, url)
+  local adapter, conn, err = resolve(url)
+  if not adapter then return {}, err end
+  if adapter.get_referencing_foreign_keys then
+    return adapter.get_referencing_foreign_keys(table_name, conn)
+  end
+  if not (adapter.list_tables and adapter.get_foreign_keys) then
+    return {}, "Adapter does not support FK lookup"
+  end
+  local tables, terr = adapter.list_tables(conn)
+  if not tables then return {}, terr end
+  local bare_target = table_name:match("([^.]+)$")
+  local refs = {}
+  for _, t in ipairs(tables) do
+    if t.type ~= "view" then
+      local fks = adapter.get_foreign_keys(t.name, conn)
+      for _, fk in ipairs(fks or {}) do
+        local bare_ref = (fk.ref_table or ""):match("([^.]+)$")
+        if fk.ref_table == table_name or bare_ref == bare_target then
+          table.insert(refs, {
+            table = t.name, column = fk.column, ref_column = fk.ref_column,
+          })
+        end
+      end
+    end
+  end
+  return refs, nil
 end
 
 --- Fetch all table columns in a single batch query (adapter-specific optimisation).

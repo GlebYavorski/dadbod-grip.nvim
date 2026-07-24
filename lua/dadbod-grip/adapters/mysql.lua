@@ -288,6 +288,47 @@ function M.get_foreign_keys(table_name, url)
   return fks, nil
 end
 
+--- Reverse FK lookup: which tables reference table_name?
+--- Single information_schema query (no per-table scan).
+--- Returns { {table, column, ref_column, composite?}, ... }, err.
+function M.get_referencing_foreign_keys(table_name, url)
+  local parsed_url = parse_url(url)
+  if not parsed_url then return {}, "Invalid MySQL URL: " .. url end
+
+  local schema, tbl = split_table_name(table_name, parsed_url.dbname)
+
+  local fk_sql = string.format([[
+    SELECT
+      kcu.TABLE_NAME AS child_table,
+      kcu.COLUMN_NAME AS fk_column,
+      kcu.REFERENCED_COLUMN_NAME AS ref_column,
+      kcu.CONSTRAINT_NAME AS constraint_name
+    FROM information_schema.KEY_COLUMN_USAGE kcu
+    WHERE kcu.REFERENCED_TABLE_SCHEMA = '%s'
+      AND kcu.REFERENCED_TABLE_NAME = '%s'
+    ORDER BY kcu.TABLE_NAME, kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
+  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+
+  local stdout, stderr, code = mysql_query(parsed_url, fk_sql)
+  if code ~= 0 then
+    return {}, stderr ~= "" and stderr or "Failed to query referencing foreign keys"
+  end
+
+  local result = parse_output(stdout)
+  if not result then return {} end
+
+  local entries = {}
+  for _, row in ipairs(result.rows) do
+    table.insert(entries, {
+      table      = row[1] or "",
+      column     = row[2] or "",
+      ref_column = row[3] or "",
+      key        = row[4] or "",
+    })
+  end
+  return db_util.group_referencing_fks(entries), nil
+end
+
 --- Fetch all table columns in a single query (O(1) CLI spawns).
 --- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
 function M.get_schema_batch(url)

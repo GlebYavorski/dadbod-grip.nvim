@@ -147,6 +147,53 @@ function M.get_foreign_keys(table_name, url)
   return fks, nil
 end
 
+--- Reverse FK lookup: which tables reference table_name?
+--- Single query via the pragma_foreign_key_list table-valued function.
+--- Returns { {table, column, ref_column, composite?}, ... }, err.
+--- Composite FKs are collapsed to one entry with comma-joined columns.
+function M.get_referencing_foreign_keys(table_name, url)
+  local db_path = extract_path(url)
+  if not db_path then return {}, "Invalid SQLite URL: " .. url end
+
+  local tbl = table_name:gsub('^"', ''):gsub('"$', '')
+  tbl = tbl:match("^[^.]+%.(.+)$") or tbl
+
+  -- PRAGMA foreign_key_list columns: id, seq, table, from, to, ...
+  -- One row per FK column; (child, id) identifies a constraint.
+  local sql_str = string.format([[
+    SELECT m.name AS child_table, p.id, p."from", p."to"
+    FROM sqlite_master m, pragma_foreign_key_list(m.name) p
+    WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%%'
+      AND lower(p."table") = lower('%s')
+    ORDER BY m.name, p.id, p.seq
+  ]], tbl:gsub("'", "''"))
+
+  local stdout, stderr, code = sqlite3(db_path, sql_str)
+  if code ~= 0 then
+    return {}, stderr ~= "" and stderr or "Failed to query referencing foreign keys"
+  end
+
+  local parsed = db_util.parse_csv(stdout)
+  if not parsed then return {} end
+
+  -- Group rows by (child_table, id): >1 row = composite FK.
+  local refs, index = {}, {}
+  for _, row in ipairs(parsed.rows) do
+    local key = (row[1] or "") .. "\0" .. (row[2] or "")
+    local entry = index[key]
+    if entry then
+      entry.column = entry.column .. "," .. (row[3] or "")
+      entry.ref_column = entry.ref_column .. "," .. (row[4] or "")
+      entry.composite = true
+    else
+      entry = { table = row[1] or "", column = row[3] or "", ref_column = row[4] or "" }
+      index[key] = entry
+      table.insert(refs, entry)
+    end
+  end
+  return refs, nil
+end
+
 --- Fetch all table columns in a single query (O(1) CLI spawns).
 --- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
 function M.get_schema_batch(url)

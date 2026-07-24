@@ -178,6 +178,56 @@ function M.get_foreign_keys(table_name, url)
   return fks, nil
 end
 
+--- Reverse FK lookup: which tables reference table_name?
+--- Single information_schema query (no per-table scan).
+--- Returns { {table, column, ref_column, composite?}, ... }, err.
+function M.get_referencing_foreign_keys(table_name, url)
+  local schema, tbl = split_table_name(table_name)
+
+  local fk_sql = string.format([[
+    SELECT
+      kcu.table_schema AS child_schema,
+      kcu.table_name AS child_table,
+      kcu.column_name AS fk_column,
+      ccu.column_name AS ref_column,
+      tc.constraint_name
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+      ON tc.constraint_name = kcu.constraint_name
+      AND tc.table_schema = kcu.table_schema
+    JOIN information_schema.constraint_column_usage ccu
+      ON tc.constraint_name = ccu.constraint_name
+      AND tc.table_schema = ccu.table_schema
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND ccu.table_schema = '%s'
+      AND ccu.table_name = '%s'
+    ORDER BY kcu.table_schema, kcu.table_name, tc.constraint_name, kcu.ordinal_position
+  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+
+  local stdout, stderr, code = psql(url, fk_sql)
+  if code ~= 0 then
+    return {}, stderr ~= "" and stderr or "Failed to query referencing foreign keys"
+  end
+
+  local parsed = db_util.parse_csv(stdout)
+  if not parsed then return {} end
+
+  local entries = {}
+  for _, row in ipairs(parsed.rows) do
+    local child_schema = row[1] or "public"
+    local child_tbl    = row[2] or ""
+    local full_name = (child_schema == "public") and child_tbl
+      or (child_schema .. "." .. child_tbl)
+    table.insert(entries, {
+      table      = full_name,
+      column     = row[3] or "",
+      ref_column = row[4] or "",
+      key        = row[5] or "",
+    })
+  end
+  return db_util.group_referencing_fks(entries), nil
+end
+
 --- Fetch all table columns in a single query (O(1) CLI spawns).
 --- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
 --- public-schema tables use bare names ("users"); other schemas use "schema.table".

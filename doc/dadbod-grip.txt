@@ -261,6 +261,7 @@ Action names (stable API) with their defaults:
 
   Grid: FK navigation ~
   grid_fk_follow   = "gf"      grid_fk_back     = "<C-o>"
+  grid_fk_referencing = "gr"   -- reverse FK: rows referencing this row
 
   Grid: workflow ~
   grid_watch       = "gW"      grid_write_mode  = "g!"
@@ -533,6 +534,7 @@ SORT / FILTER / PAGINATION ~
 FK NAVIGATION ~
                                                             *grip-fk-nav*
   gf              Follow foreign key under cursor to referenced row
+  gr              Reverse FK: jump to rows referencing the current row
   <C-o>           Go back in FK navigation stack
 
 ANALYSIS AND EXPORT ~
@@ -706,8 +708,22 @@ referenced row in the target table. A new grid opens showing just that
 row. Press `<C-o>` to go back. The title bar shows a breadcrumb trail
 of your navigation path.
 
+Press `gr` on any row to navigate the other direction: it opens the rows
+in other tables that reference the current row (reverse foreign key).
+If the cursor is on a column that other tables reference (usually the
+primary key) its value is used; otherwise the row's primary key is used.
+When exactly one table references the current one, the child grid opens
+directly, filtered to `WHERE fk_col = <value>` (e.g. `orders.user_id ←
+users`); when several do, a picker lists each `child_table.fk_column`.
+The opened grid is fully functional, so reverse hops chain: users →
+orders → order_items. Press `<C-o>` to walk back. Composite foreign
+keys and NULL values are reported and skipped.
+
 FK metadata is fetched automatically via information_schema (PostgreSQL,
-MySQL, DuckDB) or PRAGMA foreign_key_list (SQLite).
+MySQL, DuckDB) or PRAGMA foreign_key_list (SQLite). Reverse lookups use
+a single information_schema / PRAGMA query per table and are cached per
+session; adapters without a native reverse query (SQL Server) fall back
+to scanning each table's foreign keys once.
 
 ==============================================================================
 10. SCHEMA BROWSER                                          *grip-schema*

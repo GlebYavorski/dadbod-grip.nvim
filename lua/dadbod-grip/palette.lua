@@ -150,6 +150,7 @@ local function _build_actions()
 
     -- ── FK navigation ─────────────────────────────────────────────────────
     act("[fk]       Follow foreign key",     k("grid_fk_follow"),   "Open the referenced table filtered to the related row",       { "grid" }),
+    act("[fk]       Find referencing rows",  k("grid_fk_referencing"), "Open a table whose rows reference the current row (reverse FK)", { "grid" }),
     act("[fk]       FK back navigation",     k("grid_fk_back"),     "Return from FK drill-down to the previous table",             { "grid" }),
 
     -- ── DDL / workflow ────────────────────────────────────────────────────
