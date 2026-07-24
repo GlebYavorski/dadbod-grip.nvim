@@ -49,7 +49,7 @@ Not committed to any release. Roughly ordered by expected impact.
 - [x] Timestamp cells: detect ISO timestamp pattern in cell editor, show parsed human-readable date as extmark virtual text below the input line: shipped v1.2.0
 - [x] URL cells: `gx` opens the URL in the system browser -- cell editor NORMAL mode (buf-local keymap) and grid (current cell value): shipped v1.2.0
 - [ ] Markdown columns: auto-set `ft=markdown` in cell editor for columns named body, description, notes, content, text, bio (column name heuristic)
-- [ ] Enum hint: if column has known distinct values (from profile/stats cache), show them as virtual text above the input line in the cell editor
+- [x] Enum hint: if column has known distinct values, show them as virtual text in the cell editor (on-demand SELECT DISTINCT, cached per session): shipped
 
 ### Medium Value
 - [ ] Column reordering via keymap (`<` / `>` to shift column left/right)
