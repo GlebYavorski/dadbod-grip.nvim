@@ -64,6 +64,27 @@ local function try_timestamp_hint(buf, val)
   })
 end
 
+-- try_enum_hint: show the column's known distinct values as one virtual
+-- line (same placement/highlight as the timestamp hint). The caller decides
+-- WHETHER a hint applies (enum-ish column, <= 8 values); this only renders.
+local ENUM_VAL_MAX_W = 24  -- per-value display-width cap in the hint line
+local function try_enum_hint(buf, values)
+  if type(values) ~= "table" or #values == 0 then return end
+  local parts = {}
+  for _, v in ipairs(values) do
+    local s = tostring(v)
+    if vim.fn.strdisplaywidth(s) > ENUM_VAL_MAX_W then
+      s = vim.fn.strcharpart(s, 0, ENUM_VAL_MAX_W - 1) .. "\226\128\166"  -- …
+    end
+    table.insert(parts, s)
+  end
+  local hint = "  values: " .. table.concat(parts, " \226\148\130 ")  -- │
+  local ns = vim.api.nvim_create_namespace("grip_enum_hint")
+  vim.api.nvim_buf_set_extmark(buf, ns, 0, 0, {
+    virt_lines = { { { hint, "Comment" } } },
+  })
+end
+
 -- Sentinel: caller uses this to distinguish "user set NULL" from "user cancelled".
 M.NULL_VALUE = "__GRIP_NULL__"
 
@@ -75,9 +96,12 @@ M.NULL_VALUE = "__GRIP_NULL__"
 --     result = M.NULL_VALUE     -> user explicitly wants NULL (saved empty)
 --     result = "some string"    -> new value
 --   opts (optional table):
---     opts.max_h  number  max float height (default 20)
---     opts.max_w  number  max float width  (default 100)
---     opts.ft     string  filetype for syntax highlighting (e.g. "json")
+--     opts.max_h        number  max float height (default 20)
+--     opts.max_w        number  max float width  (default 100)
+--     opts.ft           string  filetype for syntax highlighting (e.g. "json")
+--     opts.enum_values  string[]  known distinct values for the column,
+--                       shown as a virtual hint line (caller computes these;
+--                       the editor stays context-free)
 function M.open(prompt, initial_value, on_save, opts)
   opts = opts or {}
   local caller_win = vim.api.nvim_get_current_win()  -- save for restore on close
@@ -126,6 +150,9 @@ function M.open(prompt, initial_value, on_save, opts)
 
   -- Timestamp hint: show relative age as eol virtual text for date/datetime values
   try_timestamp_hint(edit_buf, initial_value)
+
+  -- Enum hint: show the column's known distinct values (caller-provided)
+  try_enum_hint(edit_buf, opts.enum_values)
 
   -- Start in insert mode at end of line
   vim.cmd("startinsert!")

@@ -269,6 +269,7 @@ Active modes show as a colored badge in the grid's winbar: red `✎ WRITE` and b
 - **Full-buffer cell editor** via `gB` opens the cell value in a real split buffer — built for large JSON and long text. JSON is pretty-printed with `ft=json`, prose columns (body, notes, description, ...) open as markdown, and `:w` stages the buffer content back to the cell (saving with no textual changes stages nothing). Read-only grids open the value in view mode (`q` closes). Split style is configurable via `setup({ cell_split = "vertical" })`.
 - **Full Vim motions in the cell editor**: the editor starts in INSERT mode for quick changes. Press `<Esc>` to drop into NORMAL mode and use any Vim motion (`ciw`, `dw`, `s`, `cW`, etc.). Press `<CR>` or `<C-s>` to save from either mode; press `q` or `<Esc>` from NORMAL to cancel. A live footer shows INSERT vs NORMAL hints.
 - **Word wrap**: long cell values wrap at word boundaries inside the editor float instead of scrolling horizontally.
+- **Enum value hints**: editing a cell whose column has at most 8 distinct non-NULL values (status, role, and other enum-ish columns) shows those values as muted virtual text in the editor (`values: active │ pending │ done`), so you never have to remember valid enum values. Fetched once per session with `SELECT DISTINCT` and cached; free-text columns show nothing.
 
 ## Keybindings
 

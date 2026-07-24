@@ -644,6 +644,11 @@ CELL EDITOR ~
   gx              Open cell value as URL in browser (normal mode)
                   Timestamps: a relative-time hint appears as virtual text
                   (e.g. "3 months ago  (Monday, Aug 14 2023)")
+                  Enum-ish columns: when the column has at most 8 distinct
+                  non-NULL values, they appear as a virtual hint line
+                  (e.g. "values: active │ pending │ done"). Fetched once
+                  per session via SELECT DISTINCT and cached, so repeat
+                  edits are instant. Free-text columns show no hint.
 
 ADVANCED ~
                                                           *grip-advanced*

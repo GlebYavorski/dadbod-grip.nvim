@@ -48,6 +48,52 @@ local NULL_DISPLAY  = "·NULL·"
 local BINARY_PREFIX = "<binary"
 local MAX_COL_WIDTH = 40  -- overridden by setup opts
 
+-- ── enum hint ──────────────────────────────────────────────────────────────
+-- A column with few distinct values (a status/role/enum-ish column) gets its
+-- values shown as a virtual hint line in the cell editor. Values are fetched
+-- on demand (SELECT DISTINCT ... LIMIT threshold+1) and cached per session,
+-- so repeat edits are instant. Columns with more distinct values, free-text
+-- columns, and grids without a real table (ad-hoc SQL, staged-insert-only)
+-- get no hint at all.
+local ENUM_HINT_MAX = 8  -- show hint only for <= this many distinct non-NULL values
+
+--- Known distinct values for session's table column, or nil when the column
+--- isn't enum-ish. Cached on session.enum_cache[table][col] (false = negative).
+function M.enum_hint_values(session, col_name)
+  if not session or not session.state or not col_name then return nil end
+  local tbl = session.state.table_name
+  if not tbl then return nil end  -- no table context: ad-hoc query / staged-only grid
+
+  session.enum_cache = session.enum_cache or {}
+  session.enum_cache[tbl] = session.enum_cache[tbl] or {}
+  local cached = session.enum_cache[tbl][col_name]
+  if cached ~= nil then
+    return cached or nil  -- false = cached negative
+  end
+
+  local col_q = sql.quote_ident(col_name)
+  local distinct_sql = string.format(
+    "SELECT DISTINCT %s FROM %s WHERE %s IS NOT NULL ORDER BY 1 LIMIT %d",
+    col_q, sql.quote_ident(tbl), col_q, ENUM_HINT_MAX + 1
+  )
+  local result = db.query(distinct_sql, session.state.url)
+  if not result or not result.rows or #result.rows == 0 or #result.rows > ENUM_HINT_MAX then
+    session.enum_cache[tbl][col_name] = false  -- error / empty / too wide: cache negative
+    return nil
+  end
+
+  local values = {}
+  for _, row in ipairs(result.rows) do
+    if row[1] and row[1] ~= "" then table.insert(values, row[1]) end
+  end
+  if #values == 0 then
+    session.enum_cache[tbl][col_name] = false
+    return nil
+  end
+  session.enum_cache[tbl][col_name] = values
+  return values
+end
+
 -- ── tab view system ─────────────────────────────────────────────────────────
 -- 1=sidebar/connections  2=query-pad/history  3=grid/table-picker
 -- 4=ER diagram  5=stats  6=columns  7=fk  8=indexes  9=constraints
@@ -2400,6 +2446,7 @@ function M._setup_keymaps(bufnr)
     -- Exit visual mode
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
     local col_name = cell.col_name
+    local enum_vals = M.enum_hint_values(session, col_name)
     editor.open("Set " .. #row_indices .. " cells (" .. col_name .. ")", cell.value, function(new_val)
       if new_val == nil then return end
       local actual = new_val == editor.NULL_VALUE and nil or new_val
@@ -2409,7 +2456,7 @@ function M._setup_keymaps(bufnr)
       end
       M.apply_edit(bufnr, st)
       vim.notify("Set " .. #row_indices .. " cells in " .. col_name, vim.log.levels.INFO)
-    end, {})
+    end, { enum_values = enum_vals })
   end, "Batch edit selected cells")
 
   -- Visual d: toggle delete on all selected rows

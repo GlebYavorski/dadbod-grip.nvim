@@ -516,6 +516,10 @@ local function do_edit(bufnr, cell, url)
     edit_opts.ft    = "json"
   end
 
+  -- Enum hint: columns with few distinct values show them as virtual text
+  -- in the editor (fetched once per session, cached on session.enum_cache).
+  edit_opts.enum_values = view.enum_hint_values(session, cell.col_name)
+
   -- Capture cursor before the float opens. The editor.open/close cycle (stopinsert
   -- + window switch) shifts the grid cursor by 1, accumulating on every Enter.
   -- Pre-capturing gives us the ground truth for restoration in all three cases:
