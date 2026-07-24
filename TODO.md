@@ -16,7 +16,7 @@ Not committed to any release. Roughly ordered by expected impact.
 - [ ] Generate sync SQL from diff (make table A match table B, emit INSERT/UPDATE/DELETE migration from `gD` output)
 - [ ] Virtual columns: computed display columns defined per-table in `.grip/config.lua` via Lua expressions evaluated client-side (e.g. `full_name = row.first .. " " .. row.last`); no DB writes, spreadsheet-style power
 - [x] Row comparison (`gd` visual: side-by-side diff float, differing cells highlighted): shipped v1.2.0
-- [ ] Multi-cursor column set: press on a column to stage the same value for all visible rows at once; bulk-edit a status field without writing SQL
+- [x] Multi-cursor column set (`gU`: stage the same value for all visible rows of the current column; bulk-edit a status field without writing SQL): shipped
 
 ### High Value -- UX / Developer Experience
 - [x] Command palette (`<C-p>`: searchable action list across grid, query pad, and sidebar; self-registering via `palette.register`): shipped v3.4.0

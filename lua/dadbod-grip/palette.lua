@@ -93,6 +93,7 @@ local function _build_actions()
     act("[grid]     Edit cell",              k("grid_edit"),        "Open inline cell editor",                                     { "grid" }),
     act("[grid]     Open cell in buffer",    k("grid_cell_buffer"), "Open cell value in a split buffer (:w stages the change)",    { "grid" }),
     act("[grid]     Set cell NULL",          k("grid_null"),        "Set the cell under cursor to NULL",                           { "grid" }),
+    act("[grid]     Set column for all rows",k("grid_column_set"),  "Stage the same value for this column across all visible rows",{ "grid" }),
     act("[grid]     Insert new row",         k("grid_insert"),      "Add a blank row (staged INSERT)",                             { "grid" }),
     act("[grid]     Clone row",              k("grid_clone"),       "Copy row with PKs cleared (staged INSERT)",                   { "grid" }),
     act("[grid]     Toggle delete row",      k("grid_delete"),      "Stage row for deletion (again to unstage)",                   { "grid" }),

@@ -305,6 +305,7 @@ All keybindings are buffer-local to the grip grid. Press `?` for in-buffer help.
 | `i` / `<CR>` | Edit cell under cursor |
 | `gB` | Open cell value in a split buffer (`:w` stages; JSON pretty-printed) |
 | `n` | Set cell to NULL |
+| `gU` | Set column value for all visible rows (skips staged-deleted rows; confirms above 50 rows) |
 | `p` | Paste clipboard into cell |
 | `P` | Paste multi-line clipboard into consecutive rows |
 | `o` | Insert new row after cursor |
@@ -323,6 +324,8 @@ All keybindings are buffer-local to the grip grid. Press `?` for in-buffer help.
 | `d` | Toggle delete on all selected rows |
 | `n` | Set all selected cells in column to NULL |
 | `y` | Yank selected cells in column (newline-separated) |
+
+No selection needed for whole-page edits: `gU` in normal mode stages the same value for the current column across **all visible rows** of the page (staged-deleted rows are skipped, staged INSERT rows are included, other pages are untouched). Handy for bulk-editing a status field without writing SQL.
 
 ### Sort / Filter / Pagination
 

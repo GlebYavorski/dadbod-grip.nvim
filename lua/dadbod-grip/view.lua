@@ -2026,6 +2026,60 @@ function M._fk_referencing(bufnr)
   })
 end
 
+-- ── multi-cursor column set ───────────────────────────────────────────────
+--- Stage the same value for the current column across ALL visible rows of the
+--- current page (bulk-edit a status field without SQL or a visual selection).
+--- Mirror of the visual-mode batch edit (grid_v_edit) over the rendered page:
+--- rows staged as deleted are skipped, staged INSERT rows are included, and
+--- rows outside the current page are never touched.
+--- Module-level (not a keymap closure) so tests can drive it directly.
+function M._column_set(bufnr)
+  local session = M._sessions[bufnr]
+  if not session or not session._render then return end
+  if not is_editable(session) then
+    vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
+    return
+  end
+  local cell = M.get_cell(bufnr)
+  if not cell then
+    vim.notify("No cell under cursor", vim.log.levels.INFO)
+    return
+  end
+  local col_name = cell.col_name
+
+  -- Visible rows = exactly what the render enumerates for this page,
+  -- minus rows already staged as deleted.
+  local st = session.state
+  local row_indices = {}
+  for _, ri in ipairs(session._render.ordered) do
+    if not st.deleted[ri] then table.insert(row_indices, ri) end
+  end
+  if #row_indices == 0 then return end
+
+  -- Guard against accidental huge stages.
+  if #row_indices > 50 then
+    local choice = vim.fn.confirm(
+      "Set " .. col_name .. " for " .. #row_indices .. " rows?",
+      "&Yes\n&Cancel", 2
+    )
+    if choice ~= 1 then return end
+  end
+
+  editor.open("Set " .. #row_indices .. " rows (" .. col_name .. ")", cell.value, function(new_val)
+    if new_val == nil then return end
+    -- NOTE: explicit if, not `x == NULL_VALUE and nil or x` — that and/or
+    -- chain short-circuits back to x when the comparison is true.
+    local actual = new_val
+    if new_val == editor.NULL_VALUE then actual = nil end
+    local new_state = session.state
+    for _, ri in ipairs(row_indices) do
+      new_state = data.add_change(new_state, ri, col_name, actual)
+    end
+    M.apply_edit(bufnr, new_state)
+    vim.notify("Set " .. #row_indices .. " rows in " .. col_name, vim.log.levels.INFO)
+  end, {})
+end
+
 -- ── keymap wiring ─────────────────────────────────────────────────────────
 function M._setup_keymaps(bufnr)
   local km = require("dadbod-grip.keymaps")
@@ -2384,6 +2438,11 @@ function M._setup_keymaps(bufnr)
     vim.notify(cell.col_name .. " set to NULL", vim.log.levels.INFO)
     M.apply_edit(bufnr, new_state)
   end, "Set cell to NULL")
+
+  -- gU: multi-cursor column set (same value for all visible rows)
+  kmap("grid_column_set", function()
+    M._column_set(bufnr)
+  end, "Set column value for all visible rows")
 
   -- ── visual mode batch editing ──────────────────────────────────────────
   local function vmap(key, fn, desc)
