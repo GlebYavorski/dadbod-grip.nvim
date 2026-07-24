@@ -225,6 +225,7 @@ Action names (stable API) with their defaults:
   Grid: editing ~
   grid_edit        = "i"       grid_edit_enter  = "<CR>"
   grid_cell_buffer = "gB"      (open cell value in a full split buffer)
+  grid_column_set  = "gU"      (set column value for all visible rows)
   grid_null        = "x"       grid_paste       = "p"
   grid_paste_rows  = "P"       grid_insert      = "o"
   grid_clone       = "c"       grid_delete      = "d"
@@ -511,6 +512,13 @@ EDITING ~
                   change. Read-only grids open in view mode (q closes).
                   See |grip-cell-buffer|.
   x               Set cell to NULL
+  gU              Set column value for all visible rows (normal mode)
+                  Opens the cell editor once and stages the same value for
+                  every row on the current page: rows staged as deleted are
+                  skipped, staged INSERT rows are included, and rows on
+                  other pages are never touched. Saving an empty value (or
+                  the NULL sentinel) stages NULL. Asks for confirmation
+                  when more than 50 rows are visible.
   p               Paste clipboard value into cell
   P               Paste multi-line clipboard into consecutive rows
   o               Insert new blank row after cursor
@@ -525,6 +533,9 @@ BATCH EDITING (visual mode) ~
   d               Toggle delete on all selected rows
   x               Set all selected cells in column to NULL
   y               Yank selected cells in column (newline-separated)
+
+From normal mode, `gU` performs the same batch edit over all visible rows
+of the current page without needing a visual selection. See |grip-editing|.
 
 SORT / FILTER / PAGINATION ~
                                                        *grip-sort-filter*
