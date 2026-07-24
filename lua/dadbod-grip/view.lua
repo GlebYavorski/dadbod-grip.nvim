@@ -2508,7 +2508,7 @@ function M._setup_keymaps(bufnr)
     local enum_vals = M.enum_hint_values(session, col_name)
     editor.open("Set " .. #row_indices .. " cells (" .. col_name .. ")", cell.value, function(new_val)
       if new_val == nil then return end
-      local actual = new_val == editor.NULL_VALUE and nil or new_val
+      local actual = editor.resolve_null(new_val)
       local st = session.state
       for _, ri in ipairs(row_indices) do
         st = data.add_change(st, ri, col_name, actual)
