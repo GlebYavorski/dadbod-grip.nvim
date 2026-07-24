@@ -265,6 +265,7 @@ Active modes show as a colored badge in the grid's winbar: red `✎ WRITE` and b
 - **Live SQL floating preview** via `gl` shows real-time SQL as you stage changes.
 - **Column type annotations** via `T` overlays type info on headers.
 - **Row view transpose** via `K` shows a vertical column-by-column view of the current row. JSON cells are automatically pretty-printed inline.
+- **JSON tree drilldown** via `gK` opens a JSON/JSONB cell as a collapsible tree instead of a one-line blob. `<CR>`/`za` expands or collapses a node, `y` yanks the value under cursor, `gy` yanks its JSONPath (e.g. `$.items[2].price`), `q` closes. Objects show `{...} (N keys)`, arrays `[...] (N items)`; small documents (≤ 20 leaves) open fully expanded. Also works from inside the `K` row view: press `gK` on any line to drill into that column.
 - **JSON-aware editing**: pressing `i`/`<CR>` on a JSON cell pre-fills the editor with formatted, indented JSON for easy inspection and editing. The editor opens wider and taller with JSON syntax highlighting.
 - **Full-buffer cell editor** via `gB` opens the cell value in a real split buffer — built for large JSON and long text. JSON is pretty-printed with `ft=json`, prose columns (body, notes, description, ...) open as markdown, and `:w` stages the buffer content back to the cell (saving with no textual changes stages nothing). Read-only grids open the value in view mode (`q` closes). Split style is configurable via `setup({ cell_split = "vertical" })`.
 - **Full Vim motions in the cell editor**: the editor starts in INSERT mode for quick changes. Press `<Esc>` to drop into NORMAL mode and use any Vim motion (`ciw`, `dw`, `s`, `cW`, etc.). Press `<CR>` or `<C-s>` to save from either mode; press `q` or `<Esc>` from NORMAL to cancel. A live footer shows INSERT vs NORMAL hints.
@@ -395,6 +396,7 @@ Note: explain query plan is at `gQ` (Query Doctor).
 | `gi` | Table info (columns, types, PKs) |
 | `gI` | Table properties (columns, indexes, stats) |
 | `ge` | Explain cell under cursor |
+| `gK` | JSON tree drilldown (collapsible tree; `y` yanks value, `gy` yanks JSONPath) |
 | `gV` | DDL float (CREATE TABLE with columns, PKs, FKs, indexes) |
 
 ### Schema & Workflow

@@ -2782,6 +2782,22 @@ function M._setup_keymaps(bufnr)
     -- Shadow ]p/[p: Vim's built-in "put indented" would E21 on modifiable=false popup buffers
     vim.keymap.set("n", "]p", "<Nop>", { buffer = popup_buf, silent = true })
     vim.keymap.set("n", "[p", "<Nop>", { buffer = popup_buf, silent = true })
+    -- gK inside the row view: JSON tree drilldown for the column under cursor
+    local jt_key = km.get("grid_json_tree")
+    if jt_key then
+      vim.keymap.set("n", jt_key, function()
+        local cur = vim.api.nvim_win_get_cursor(0)[1]
+        for _, col in ipairs(st.columns) do
+          local range = col_line_ranges[col]
+          if range and cur >= range.start and cur < range.start + range.count then
+            require("dadbod-grip.json_tree").open(
+              data.effective_value(st, cell.row_idx, col),
+              { title = " " .. col .. " (JSON) ", origin_win = grip_win })
+            return
+          end
+        end
+      end, { buffer = popup_buf, silent = true, nowait = true })
+    end
     -- Apply highlights using actual line ranges (not column index, which breaks on multi-line JSON)
     local status = data.row_status(st, cell.row_idx)
     local row_ns = vim.api.nvim_create_namespace("grip_row_view")
@@ -2836,6 +2852,19 @@ function M._setup_keymaps(bufnr)
   kmap("grid_cell_buffer", function()
     require("dadbod-grip.cell_buffer").open(bufnr)
   end, "Open cell in buffer")
+
+  -- gK: JSON tree drilldown for the cell under cursor
+  kmap("grid_json_tree", function()
+    local cell = M.get_cell(bufnr)
+    if not cell then
+      vim.notify("Move cursor to a data row", vim.log.levels.INFO)
+      return
+    end
+    require("dadbod-grip.json_tree").open(cell.value, {
+      title      = " " .. cell.col_name .. " (JSON) ",
+      origin_win = vim.api.nvim_get_current_win(),
+    })
+  end, "JSON tree drilldown")
 
   -- K (visual): stack-inspect multiple selected rows in one float.
   -- Each row becomes a labeled block separated by a blank line.
@@ -5019,6 +5048,7 @@ function M.show_help(opts)
       "  <CR> / i  Edit cell under cursor (JSON cells: pretty-printed in editor)",
       "  gB        Open cell value in split buffer (JSON: ft=json; :w stages)",
       "  K         Row view (vertical transpose; JSON cells auto-expanded)",
+      "  gK        JSON tree drilldown (expand/collapse keys, yank value or JSONPath)",
       "  y         Yank cell value to clipboard",
       "  Y         Yank row as CSV",
       "  gY        Yank entire table as CSV",

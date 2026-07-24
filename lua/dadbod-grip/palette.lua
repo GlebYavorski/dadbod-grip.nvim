@@ -104,6 +104,7 @@ local function _build_actions()
 
     -- ── Grid: display ─────────────────────────────────────────────────────
     act("[grid]     Row view",               k("grid_row_view"),    "Show current row as vertical key-value list",                 { "grid" }),
+    act("[grid]     JSON tree drilldown",    k("grid_json_tree"),   "Explore a JSON cell as a collapsible key tree",               { "grid" }),
     act("[grid]     Toggle type row",        k("grid_type_row"),    "Show/hide column type annotations row",                       { "grid" }),
     act("[grid]     Cycle column width",     k("grid_col_width"),   "Compact -> expanded -> reset for column under cursor",        { "grid" }),
     act("[grid]     Hide column",            k("grid_hide_col"),    "Hide the column under cursor",                                { "grid" }),
