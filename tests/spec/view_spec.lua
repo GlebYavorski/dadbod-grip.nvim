@@ -174,6 +174,32 @@ test("classify_cell: '1' without type returns nil (not bool)", function()
   eq(classify("1", nil), nil)
 end)
 
+-- ── get_cell: NULL originals surface as nil ─────────────────────────────────
+-- grid_fk_follow guards on cell.value == nil before building
+-- "ref_column = <value>" SQL. Original NULLs arrive from CSV as "" and must
+-- surface as nil so the guard fires instead of querying for = ''.
+
+test("get_cell: value is nil for NULL original cell (fk-follow NULL guard)", function()
+  cleanup()
+  local st = data.new({
+    columns = { "id", "ref_id" },
+    rows = { { "1", "" } },  -- ref_id is NULL (CSV empty cell)
+    primary_keys = { "id" },
+    table_name = "orders",
+    url = "sqlite:tests/seed_sqlite.db",
+  })
+  local bufnr = view.open(st, st.url, "SELECT * FROM orders", {})
+  local session = view._sessions[bufnr]
+  local r = session._render
+  local bp = r.byte_positions[1]["ref_id"]
+  vim.api.nvim_win_set_cursor(0, { r.data_start or 4, bp.start })
+  local cell = view.get_cell(bufnr)
+  assert(cell, "cursor should be on a data cell")
+  eq(cell.col_name, "ref_id", "cursor column")
+  eq(cell.value, nil, "NULL original must surface as nil so the FK NULL guard fires")
+  cleanup()
+end)
+
 -- ── summary ──────────────────────────────────────────────────────────────────
 
 print(string.format("\nview_spec: %d passed, %d failed", pass, fail))
