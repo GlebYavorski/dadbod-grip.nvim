@@ -124,6 +124,7 @@ Override if needed: >lua
     connections_path = nil,
     picker           = "builtin",
     pinned_max       = nil,
+    cell_split       = "horizontal",
   })
 <
 When `completion` is false, grip's built-in TextChangedI popup is disabled.
@@ -149,6 +150,11 @@ existing `setup()` call: >lua
 <
 When the cap is reached, `gL` refuses to pin and notifies you to unpin
 something first. Unset (nil, the default) means no cap.
+
+                                                          *grip-cell-split*
+`cell_split` controls how the full-buffer cell editor (`gB`) opens:
+"horizontal" (default) splits below the grid at ~40% height, "vertical"
+splits at ~40% width. See |grip-cell-buffer|.
 
 AI SQL generation (optional): >lua
   require("dadbod-grip").setup({
@@ -218,6 +224,7 @@ Action names (stable API) with their defaults:
 
   Grid: editing ~
   grid_edit        = "i"       grid_edit_enter  = "<CR>"
+  grid_cell_buffer = "gB"      (open cell value in a full split buffer)
   grid_null        = "x"       grid_paste       = "p"
   grid_paste_rows  = "P"       grid_insert      = "o"
   grid_clone       = "c"       grid_delete      = "d"
@@ -498,6 +505,10 @@ EDITING ~
                   JSON cell values open with JSON syntax highlighting and
                   a taller float. Long values wrap at word boundaries.
                   Footer updates live: INSERT hint vs NORMAL hint.
+  gB              Open cell value in a full split buffer
+                  JSON is pretty-printed with ft=json; :w stages the
+                  change. Read-only grids open in view mode (q closes).
+                  See |grip-cell-buffer|.
   x               Set cell to NULL
   p               Paste clipboard value into cell
   P               Paste multi-line clipboard into consecutive rows
@@ -668,6 +679,28 @@ history. Press `U` to reset to the original state in one step.
 
 Read-only mode is auto-detected when no primary key exists on the table
 (grip needs PKs for WHERE clauses in UPDATE/DELETE statements).
+
+Full-buffer cell editor ~
+                                                        *grip-cell-buffer*
+Press `gB` on a cell to open its value in a real split buffer (named
+grip://cell/<table>/<row>/<column>) instead of the small float editor.
+Built for large values: big JSON documents, long text.
+
+  - JSON values are pretty-printed with 2-space indent and ft=json
+    (syntax highlighting and folding work as usual).
+  - Prose columns (body, description, notes, content, text, bio) open
+    with ft=markdown; everything else stays plain.
+  - Multiline values round-trip exactly: the grid displays newlines as a
+    return symbol, the buffer edits the real thing.
+  - :w stages the buffer content as a change to that cell (nothing
+    touches the database until `a`). Saving without textual changes
+    stages nothing ("No changes"), so pretty-printed JSON never produces
+    whitespace-only diffs.
+  - NULL cells open empty. Save non-empty text to stage it; to keep the
+    cell NULL just close without saving (:q).
+  - On read-only grids the buffer opens in view mode and `q` closes it.
+
+Split direction and size are configurable, see |grip-cell-split|.
 
 ==============================================================================
 8. SORT, FILTER, PAGINATE                           *grip-sort-filter-page*

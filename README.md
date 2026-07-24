@@ -265,6 +265,7 @@ Active modes show as a colored badge in the grid's winbar: red `✎ WRITE` and b
 - **Column type annotations** via `T` overlays type info on headers.
 - **Row view transpose** via `K` shows a vertical column-by-column view of the current row. JSON cells are automatically pretty-printed inline.
 - **JSON-aware editing**: pressing `i`/`<CR>` on a JSON cell pre-fills the editor with formatted, indented JSON for easy inspection and editing. The editor opens wider and taller with JSON syntax highlighting.
+- **Full-buffer cell editor** via `gB` opens the cell value in a real split buffer — built for large JSON and long text. JSON is pretty-printed with `ft=json`, prose columns (body, notes, description, ...) open as markdown, and `:w` stages the buffer content back to the cell (saving with no textual changes stages nothing). Read-only grids open the value in view mode (`q` closes). Split style is configurable via `setup({ cell_split = "vertical" })`.
 - **Full Vim motions in the cell editor**: the editor starts in INSERT mode for quick changes. Press `<Esc>` to drop into NORMAL mode and use any Vim motion (`ciw`, `dw`, `s`, `cW`, etc.). Press `<CR>` or `<C-s>` to save from either mode; press `q` or `<Esc>` from NORMAL to cancel. A live footer shows INSERT vs NORMAL hints.
 - **Word wrap**: long cell values wrap at word boundaries inside the editor float instead of scrolling horizontally.
 
@@ -300,6 +301,7 @@ All keybindings are buffer-local to the grip grid. Press `?` for in-buffer help.
 | Key | Action |
 |-----|--------|
 | `i` / `<CR>` | Edit cell under cursor |
+| `gB` | Open cell value in a split buffer (`:w` stages; JSON pretty-printed) |
 | `n` | Set cell to NULL |
 | `p` | Paste clipboard into cell |
 | `P` | Paste multi-line clipboard into consecutive rows |
@@ -622,6 +624,7 @@ require("dadbod-grip").setup({
   connections_path = nil,      -- absolute path to a shared connections.json file
   border           = "rounded",
   picker           = "builtin",-- "builtin", "telescope", or "snacks"
+  cell_split       = "horizontal", -- gB cell buffer: "horizontal" or "vertical" split
 })
 ```
 

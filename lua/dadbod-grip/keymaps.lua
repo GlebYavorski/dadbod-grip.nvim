@@ -71,6 +71,7 @@ M.defaults = {
   -- ── Grid: editing ──────────────────────────────────────────────────────
   grid_edit        = "i",        -- edit cell (open inline editor)
   grid_edit_enter  = "<CR>",     -- edit cell (enter)
+  grid_cell_buffer = "gB",       -- open cell value in a full split buffer
   grid_null        = "x",        -- set cell NULL
   grid_paste       = "p",        -- paste clipboard into cell
   grid_paste_rows  = "P",        -- paste multi-line into consecutive rows

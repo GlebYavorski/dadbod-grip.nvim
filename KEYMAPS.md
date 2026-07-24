@@ -35,6 +35,7 @@ Action names map 1:1 to the entries in `lua/dadbod-grip/keymaps.lua`.
 | Key | Action |
 |-----|--------|
 | `i` / `<CR>` | Edit cell under cursor |
+| `gB` | Open cell value in a split buffer (`:w` stages; JSON pretty-printed; read-only grids: view mode, `q` closes) |
 | `x` | Set cell to NULL |
 | `p` | Paste clipboard into cell |
 | `P` | Paste multi-line into consecutive rows |
@@ -228,7 +229,7 @@ Note: explain query plan is accessible via `gQ` (removed from tab system).
 
 Available for future features. Check this list before assigning a new `g` keymap:
 
-**Uppercase (free):** `gB`, `gK`, `gM`, `gU`, `gZ`
+**Uppercase (free):** `gK`, `gM`, `gU`, `gZ` (`gB` taken in grid: open cell in buffer)
 **Lowercase (free in grid):** `gm`, `gr`
 **Lowercase (free in sidebar):** `gm`, `gr`
 
