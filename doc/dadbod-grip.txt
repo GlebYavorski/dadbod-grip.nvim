@@ -254,7 +254,8 @@ Action names (stable API) with their defaults:
   grid_last_page   = "]P"      grid_first_page  = "[P"
 
   Grid: inspection / analysis ~
-  grid_explain_cell= "ge"      grid_preview_sql = "gs"
+  grid_explain_cell= "ge"      grid_json_tree   = "gK"
+  grid_preview_sql = "gs"
   grid_copy_sql    = "gc"      grid_table_info  = "gi"
   grid_table_props = "gI"      grid_rename_col  = "gN"
   grid_aggregate   = "ga"      grid_col_stats   = "gS"
@@ -580,6 +581,9 @@ INSPECTION ~
   gi              Table info (columns, types, PKs)
   gI              Table properties (columns, indexes, stats)
   ge              Explain cell under cursor (type, nullable, constraints)
+  gK              JSON tree drilldown for the cell under cursor
+                  Opens JSON/JSONB values as a collapsible tree.
+                  See |grip-json-tree|.
 
 TAB VIEWS ~
                                                         *grip-tab-views*
@@ -719,6 +723,34 @@ Built for large values: big JSON documents, long text.
   - On read-only grids the buffer opens in view mode and `q` closes it.
 
 Split direction and size are configurable, see |grip-cell-split|.
+
+JSON tree drilldown ~
+                                                          *grip-json-tree*
+Press `gK` on a JSON/JSONB cell to explore it as a collapsible tree
+instead of squinting at a one-line blob: >
+
+  ▾ $: {...} (2 keys)
+      key: "value"
+    ▾ nested: {...} (1 key)
+        deep: true
+<
+Inside the float:
+
+  <CR> / za       Toggle expand/collapse on the node under cursor
+  j / k           Move between nodes
+  y               Yank the value under cursor (containers yank
+                  compact JSON; strings yank the raw string)
+  gy              Yank the JSONPath of the node under cursor,
+                  e.g. $.items[2].price or $["weird key"]
+  q / <Esc>       Close
+
+Objects render as {...} (N keys), arrays as [...] (N items), and keys
+are sorted for stable output. null renders dimmed, booleans green/red.
+The float opens with the top level expanded and children collapsed;
+documents with 20 or fewer leaves open fully expanded.
+
+`gK` also works inside the `K` row view: press it on any line to drill
+into that column's JSON value. Non-JSON cells notify "Not a JSON cell".
 
 ==============================================================================
 8. SORT, FILTER, PAGINATE                           *grip-sort-filter-page*

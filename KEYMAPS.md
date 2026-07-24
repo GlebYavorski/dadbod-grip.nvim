@@ -109,12 +109,25 @@ The editor starts in INSERT mode. Press `<Esc>` to drop into NORMAL for Vim moti
 | Key | Action |
 |-----|--------|
 | `ge` | Explain cell (type, value, status) |
+| `gK` | JSON tree drilldown: open JSON/JSONB cell as a collapsible tree |
 | `gs` | Preview staged SQL |
 | `gc` | Copy staged SQL to clipboard |
 | `gi` | Table info (columns, types, PKs) |
 | `gI` | Table properties (full detail float) |
 | `gN` | Rename column under cursor |
 | `gl` | Toggle live SQL preview float |
+
+**JSON tree float keymaps** (opened by `gK`; also available via `gK` inside the `K` row view)
+
+| Key | Action |
+|-----|--------|
+| `<CR>` / `za` | Toggle expand/collapse on the node under cursor |
+| `j` / `k` | Move between nodes |
+| `y` | Yank the value under cursor (containers yank compact JSON) |
+| `gy` | Yank the JSONPath under cursor (e.g. `$.items[2].price`) |
+| `q` / `<Esc>` | Close |
+
+Opens with the top level expanded and children collapsed; documents with ≤ 20 leaves open fully expanded. Keys are sorted for stable output; `null` renders dimmed, booleans green/red.
 
 ### Analysis & Export
 | Key | Action |
@@ -230,8 +243,8 @@ Note: explain query plan is accessible via `gQ` (removed from tab system).
 
 Available for future features. Check this list before assigning a new `g` keymap:
 
-**Uppercase (free):** `gK`, `gM`, `gZ` (`gB` taken in grid: open cell in buffer; `gU` taken in grid: column set for all visible rows)
-**Lowercase (free in grid):** `gm`, `gr`
+**Uppercase (free):** `gM`, `gZ` (`gB` taken in grid: open cell in buffer; `gU` taken in grid: column set for all visible rows; `gK` taken in grid: JSON tree drilldown)
+**Lowercase (free in grid):** `gm` (`gr` taken in grid: reverse FK navigation)
 **Lowercase (free in sidebar):** `gm`, `gr`
 
 ## Command Palette

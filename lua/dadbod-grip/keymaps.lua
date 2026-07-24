@@ -120,6 +120,7 @@ M.defaults = {
 
   -- ── Grid: inspection / analysis ────────────────────────────────────────
   grid_explain_cell= "ge",       -- explain cell (type, value, status)
+  grid_json_tree   = "gK",       -- JSON tree drilldown for current cell
   grid_preview_sql = "gs",       -- preview staged SQL
   grid_copy_sql    = "gc",       -- copy staged SQL to clipboard
   grid_table_info  = "gi",       -- table info popup (columns, types, PKs)
