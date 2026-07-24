@@ -292,6 +292,11 @@ function M.list_routines(url)
     local routine_name = row[3] or ""
     local args = row[4] or ""
     local kind = row[5] or "function"
+    -- PostgreSQL 14+ prefixes procedure arguments with an explicit "IN" mode
+    -- ("IN order_id integer, IN new_status text") while functions omit it.
+    -- Strip the bare IN so functions and procedures display consistently;
+    -- meaningful modes (INOUT/OUT/VARIADIC) are kept.
+    args = args:gsub("^IN ", ""):gsub(", IN ", ", ")
     local qualified = (schema_name == "public") and routine_name or (schema_name .. "." .. routine_name)
     table.insert(result, {
       name = qualified,

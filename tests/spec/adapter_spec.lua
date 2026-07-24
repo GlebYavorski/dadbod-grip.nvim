@@ -301,6 +301,26 @@ test("pg get_routine_source: uses pg_get_functiondef and preserves source text",
   end)
 end)
 
+test("pg list_routines: strips bare IN mode from procedure arguments", function()
+  with_executable(function()
+    local csv = table.concat({
+      "source_id,schema,name,identity_arguments,kind",
+      '23456,public,mark_order_status,"IN order_id integer, IN new_status text",procedure',
+      '34567,public,swap_vals,"INOUT a integer, INOUT b integer",procedure',
+      "",
+    }, "\n")
+    capture_system_args(csv, function()
+      local routines, err = pg.list_routines("postgresql://localhost/db")
+      assert(not err, "should not error: " .. tostring(err))
+      eq(routines[1].display, "mark_order_status(order_id integer, new_status text)",
+        "IN mode stripped for display parity with functions")
+      eq(routines[1].arguments, "order_id integer, new_status text", "arguments field cleaned")
+      eq(routines[2].display, "swap_vals(INOUT a integer, INOUT b integer)",
+        "INOUT mode is meaningful and kept")
+    end)
+  end)
+end)
+
 -- ── PostgreSQL EXPLAIN safety ────────────────────────────────────────────
 -- ANALYZE executes the statement; it must only be added for read-only SQL.
 
