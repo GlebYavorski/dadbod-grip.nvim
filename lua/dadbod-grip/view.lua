@@ -119,6 +119,41 @@ vim.api.nvim_create_autocmd("ColorScheme", {
 local _ag = vim.api.nvim_create_augroup("DadbodGripView", { clear = true })
 
 -- ── column width calculation ──────────────────────────────────────────────
+local function truncate_display(s, width, ellipsize)
+  s = tostring(s or "")
+  if width <= 0 then return "", 0 end
+  local dw = vim.fn.strdisplaywidth(s)
+  if dw <= width then return s, dw end
+
+  local ell = ellipsize ~= false and "…" or ""
+  local ell_w = vim.fn.strdisplaywidth(ell)
+  if ell ~= "" and ell_w <= width and width <= ell_w then
+    return ell, ell_w
+  end
+
+  local target = math.max(0, width - ell_w)
+  local out = {}
+  local used = 0
+  for i = 0, vim.fn.strchars(s) - 1 do
+    local ch = vim.fn.strcharpart(s, i, 1)
+    local cw = vim.fn.strdisplaywidth(ch)
+    if used + cw > target then break end
+    out[#out + 1] = ch
+    used = used + cw
+  end
+
+  if ell ~= "" and used + ell_w <= width then
+    out[#out + 1] = ell
+    used = used + ell_w
+  end
+  return table.concat(out), used
+end
+
+local function pad_display(s, width, ellipsize)
+  local trimmed, dw = truncate_display(s, width, ellipsize)
+  return trimmed .. string.rep(" ", math.max(0, width - dw)), dw
+end
+
 local function calc_col_widths(columns, rows, max_width)
   local widths = {}
   for _, col in ipairs(columns) do
@@ -145,27 +180,17 @@ end
 -- ── cell display formatting ───────────────────────────────────────────────
 local function format_cell(value, width, is_null_staged)
   if is_null_staged or value == nil then
-    local s = NULL_DISPLAY
-    local sw = vim.fn.strdisplaywidth(s)
-    if sw > width then
-      s = vim.fn.strcharpart(s, 0, width - 1) .. "…"
-      sw = width
-    end
-    return s .. string.rep(" ", width - sw), "GripNull"
+    local s = pad_display(NULL_DISPLAY, width)
+    return s, "GripNull"
   end
+  value = tostring(value)
   if value:sub(1, #BINARY_PREFIX) == BINARY_PREFIX then
-    local s = vim.fn.strcharpart(value, 0, width)
-    local sw = vim.fn.strdisplaywidth(s)
-    return s .. string.rep(" ", width - sw), "GripReadonly"
+    local s = pad_display(value, width, false)
+    return s, "GripReadonly"
   end
   local display = value ~= "" and value:gsub("\n", "↵"):gsub("\r", "") or NULL_DISPLAY
   local hl = value == "" and "GripNull" or nil
-  local dw = vim.fn.strdisplaywidth(display)
-  if dw > width then
-    display = vim.fn.strcharpart(display, 0, width - 1) .. "…"
-    dw = width
-  end
-  return display .. string.rep(" ", width - dw), hl
+  return pad_display(display, width), hl
 end
 
 --- Classify a cell value for conditional formatting.
@@ -318,7 +343,7 @@ local function title_line(session, columns, widths, total_width)
 
   -- If still too wide, truncate
   if title_dw > available and available > 4 then
-    title = vim.fn.strcharpart(title, 0, available - 1) .. "…"
+    title = truncate_display(title, available)
     title_dw = vim.fn.strdisplaywidth(title)
   end
 
@@ -440,8 +465,7 @@ local function build_render(session, opts)
       local w = widths[col]
       local lw = vim.fn.strdisplaywidth(label)
       if lw > w then
-        label = vim.fn.strcharpart(label, 0, w - 1) .. "…"
-        lw = w
+        label, lw = truncate_display(label, w)
       end
       local padded = label .. string.rep(" ", w - lw)
       hdr_byte_positions[col] = { start = hbp, finish = hbp + #padded - 1 }
@@ -478,8 +502,7 @@ local function build_render(session, opts)
       local w = widths[col]
       local dw = vim.fn.strdisplaywidth(dtype)
       if dw > w then
-        dtype = vim.fn.strcharpart(dtype, 0, w - 1) .. "…"
-        dw = w
+        dtype, dw = truncate_display(dtype, w)
       end
       local padded = dtype .. string.rep(" ", w - dw)
       type_row_byte_positions[col] = { start = tbp, finish = tbp + #padded - 1 }
@@ -5077,5 +5100,7 @@ end
 
 -- Exposed for testing
 M._classify_cell = classify_cell
+M._format_cell = format_cell
+M._truncate_display = truncate_display
 
 return M

@@ -1,5 +1,6 @@
--- view_spec.lua: unit tests for classify_cell conditional formatting
+-- view_spec.lua: unit tests for view rendering helpers
 local view = require("dadbod-grip.view")
+local data = require("dadbod-grip.data")
 
 local pass = 0
 local fail = 0
@@ -18,7 +19,50 @@ local function eq(a, b, msg)
   assert(a == b, (msg or "") .. ": expected " .. tostring(b) .. ", got " .. tostring(a))
 end
 
+local function cleanup()
+  for bufnr, _ in pairs(view._sessions) do
+    view._sessions[bufnr] = nil
+    pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+  end
+  while #vim.api.nvim_tabpage_list_wins(0) > 1 do
+    pcall(vim.api.nvim_win_close, vim.api.nvim_tabpage_list_wins(0)[#vim.api.nvim_tabpage_list_wins(0)], true)
+  end
+end
+
 local classify = view._classify_cell
+
+-- ── display width padding/truncation ────────────────────────────────────────
+
+test("format_cell: pads Korean text to exact display width", function()
+  local cell = view._format_cell("개념 삼각비의 값", 12)
+  eq(vim.fn.strdisplaywidth(cell), 12)
+end)
+
+test("format_cell: truncates Korean text to exact display width", function()
+  local cell = view._format_cell("수선에 의해 나누어진 두 직각삼각형", 11)
+  eq(vim.fn.strdisplaywidth(cell), 11)
+end)
+
+test("render: Korean cell content keeps table lines aligned", function()
+  cleanup()
+  local st = data.new({
+    columns = { "id", "hints", "comment" },
+    rows = {
+      { "1", "수선에 의해 나누어진 두 직각삼각형", "중3학년 삼각형 내부 수선" },
+      { "2", "먼저 직각삼각형에서 tan 값을 이용", "한글 폭 정렬 확인" },
+    },
+    primary_keys = { "id" },
+    table_name = "problem_hint",
+    url = "mysql://localhost/local_db",
+  })
+  local bufnr = view.open(st, st.url, "SELECT * FROM problem_hint", { max_col_width = 12 })
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, 6, false)
+  local expected = vim.fn.strdisplaywidth(lines[1])
+  for i = 2, 6 do
+    eq(vim.fn.strdisplaywidth(lines[i]), expected, "line " .. i .. " display width")
+  end
+  cleanup()
+end)
 
 -- ── boolean detection (no type) ──────────────────────────────────────────────
 
