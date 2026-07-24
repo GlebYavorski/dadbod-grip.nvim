@@ -190,6 +190,7 @@ work without credentials.
 ### Query and Navigation
 - **Sort, filter, and pagination** using `s`/`S` to sort, `f`/`<C-f>`/`F` to filter, `gp`/`gP` for saved filter presets, and `H`/`L` to page (or `]p`/`[p`).
 - **Foreign key navigation** via `gf` to follow a FK to its referenced row, and `<C-o>` to go back.
+- **Reverse FK navigation** via `gr` to open the rows in other tables that reference the current row (e.g. `orders.user_id ← users`). One referencing table opens directly; several show a picker of `child_table.fk_column`. Hops chain: users → orders → order_items.
 - **Query history** via `gh` or `:GripHistory` browsing all executed queries with timestamp and SQL preview, stored in `.grip/history.jsonl`.
 - **Data profiling** via `gR` or `:GripProfile` showing sparkline distributions, completeness, cardinality, and top values per column.
 - **Column statistics** via `gS` showing count, distinct, nulls, min/max, and top values.
@@ -345,6 +346,7 @@ All keybindings are buffer-local to the grip grid. Press `?` for in-buffer help.
 | Key | Action |
 |-----|--------|
 | `gf` | Follow foreign key under cursor |
+| `gr` | Reverse FK: jump to rows referencing the current row |
 | `<C-o>` | Go back in FK navigation stack |
 
 ### Surface Navigation and Depth Views (1-9)
@@ -697,6 +699,7 @@ Common actions worth knowing:
 | `open_notebook` | `gn` | query pad |
 | `grid_apply` | `a` | grid |
 | `grid_fk_follow` | `gf` | grid |
+| `grid_fk_referencing` | `gr` | grid |
 | `grid_profile` | `gR` | grid |
 | `grid_col_stats` | `gS` | grid |
 | `connections` | `gC` | all |

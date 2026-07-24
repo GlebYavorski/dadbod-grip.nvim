@@ -400,6 +400,64 @@ function M.get_foreign_keys(table_name, url)
   return fks, nil
 end
 
+--- Reverse FK lookup: which tables reference table_name?
+--- Single information_schema query (no per-table scan).
+--- Returns { {table, column, ref_column, composite?}, ... }, err.
+function M.get_referencing_foreign_keys(table_name, url)
+  local db_path = extract_path(url)
+  if not db_path then return {}, "Invalid DuckDB URL: " .. url end
+
+  local catalog, schema, tbl = split_catalog_schema_table(url, table_name)
+
+  if catalog then
+    -- Attached catalogs: no cross-catalog FK introspection (same as forward FKs).
+    return {}, nil
+  end
+
+  local fk_sql = string.format([[
+    SELECT
+      kcu.table_schema AS child_schema,
+      kcu.table_name AS child_table,
+      kcu.column_name AS fk_column,
+      kcu2.column_name AS ref_column,
+      rc.constraint_name
+    FROM information_schema.referential_constraints rc
+    JOIN information_schema.key_column_usage kcu
+      ON rc.constraint_schema = kcu.constraint_schema
+      AND rc.constraint_name = kcu.constraint_name
+    JOIN information_schema.key_column_usage kcu2
+      ON rc.unique_constraint_schema = kcu2.constraint_schema
+      AND rc.unique_constraint_name = kcu2.constraint_name
+      AND kcu.ordinal_position = kcu2.ordinal_position
+    WHERE kcu2.table_schema = '%s'
+      AND kcu2.table_name = '%s'
+    ORDER BY kcu.table_schema, kcu.table_name, rc.constraint_name, kcu.ordinal_position
+  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+
+  local stdout, stderr, code = duckdb(db_path, fk_sql, nil, url)
+  if code ~= 0 then
+    return {}, stderr ~= "" and stderr or "Failed to query referencing foreign keys"
+  end
+
+  local parsed = db_util.parse_csv(stdout)
+  if not parsed then return {} end
+
+  local entries = {}
+  for _, row in ipairs(parsed.rows) do
+    local child_schema = row[1] or "main"
+    local child_tbl    = row[2] or ""
+    local full_name = (child_schema == "main") and child_tbl
+      or (child_schema .. "." .. child_tbl)
+    table.insert(entries, {
+      table      = full_name,
+      column     = row[3] or "",
+      ref_column = row[4] or "",
+      key        = row[5] or "",
+    })
+  end
+  return db_util.group_referencing_fks(entries), nil
+end
+
 function M.explain(sql_str, url)
   local db_path = extract_path(url)
   if not db_path then return nil, "Invalid DuckDB URL: " .. url end
