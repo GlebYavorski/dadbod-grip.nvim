@@ -301,6 +301,66 @@ test("pg get_routine_source: uses pg_get_functiondef and preserves source text",
   end)
 end)
 
+test("pg list_routines: strips bare IN mode from procedure arguments", function()
+  with_executable(function()
+    local csv = table.concat({
+      "source_id,schema,name,identity_arguments,kind",
+      '23456,public,mark_order_status,"IN order_id integer, IN new_status text",procedure',
+      '34567,public,swap_vals,"INOUT a integer, INOUT b integer",procedure',
+      "",
+    }, "\n")
+    capture_system_args(csv, function()
+      local routines, err = pg.list_routines("postgresql://localhost/db")
+      assert(not err, "should not error: " .. tostring(err))
+      eq(routines[1].display, "mark_order_status(order_id integer, new_status text)",
+        "IN mode stripped for display parity with functions")
+      eq(routines[1].arguments, "order_id integer, new_status text", "arguments field cleaned")
+      eq(routines[2].display, "swap_vals(INOUT a integer, INOUT b integer)",
+        "INOUT mode is meaningful and kept")
+    end)
+  end)
+end)
+
+-- ── PostgreSQL EXPLAIN safety ────────────────────────────────────────────
+-- ANALYZE executes the statement; it must only be added for read-only SQL.
+
+test("pg explain: SELECT uses ANALYZE for actual timings", function()
+  with_executable(function()
+    local args = capture_system_args("QUERY PLAN\nSeq Scan\n", function()
+      pg.explain("SELECT * FROM users", "postgresql://localhost/db")
+    end)
+    contains(last_arg(args), "EXPLAIN (FORMAT TEXT, ANALYZE) SELECT", "SELECT gets ANALYZE")
+  end)
+end)
+
+test("pg explain: UPDATE/DELETE/INSERT never use ANALYZE (would execute the DML)", function()
+  with_executable(function()
+    for _, stmt in ipairs({
+      "UPDATE users SET age = 1 WHERE id = 1",
+      "DELETE FROM users WHERE id = 1",
+      "INSERT INTO users (name) VALUES ('x')",
+    }) do
+      local args = capture_system_args("QUERY PLAN\nSeq Scan\n", function()
+        pg.explain(stmt, "postgresql://localhost/db")
+      end)
+      local sql_arg = last_arg(args)
+      assert(not sql_arg:find("ANALYZE", 1, true),
+        "no ANALYZE for: " .. stmt .. " (got: " .. sql_arg .. ")")
+      contains(sql_arg, "EXPLAIN (FORMAT TEXT) ", "plain EXPLAIN used")
+    end
+  end)
+end)
+
+test("pg explain: WITH gets plain EXPLAIN (may contain data-modifying CTEs)", function()
+  with_executable(function()
+    local args = capture_system_args("QUERY PLAN\nSeq Scan\n", function()
+      pg.explain("WITH gone AS (DELETE FROM users RETURNING *) SELECT * FROM gone",
+        "postgresql://localhost/db")
+    end)
+    assert(not last_arg(args):find("ANALYZE", 1, true), "no ANALYZE for WITH")
+  end)
+end)
+
 -- ── SQLite .sqliterc bypass ─────────────────────────────────────────────
 
 test("sqlite query: passes -init '' to skip .sqliterc", function()

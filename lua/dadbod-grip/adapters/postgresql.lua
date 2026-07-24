@@ -264,7 +264,14 @@ function M.get_schema_batch(url)
 end
 
 function M.explain(sql_str, url)
-  local explain_sql = "EXPLAIN (FORMAT TEXT, ANALYZE) " .. sql_str
+  -- ANALYZE actually executes the statement, so it is only safe for plain
+  -- read-only queries. DML (UPDATE/DELETE/INSERT/MERGE) and WITH (which may
+  -- contain data-modifying CTEs) get a plain EXPLAIN so previewing a plan
+  -- can never mutate data.
+  local first_kw = (sql_str:match("^%s*(%a+)") or ""):upper()
+  local read_only = first_kw == "SELECT" or first_kw == "TABLE" or first_kw == "VALUES"
+  local explain_sql = (read_only and "EXPLAIN (FORMAT TEXT, ANALYZE) " or "EXPLAIN (FORMAT TEXT) ")
+    .. sql_str
   local stdout, stderr, code = psql(url, explain_sql)
   if code ~= 0 then
     return nil, stderr ~= "" and stderr or "EXPLAIN failed"
@@ -335,6 +342,11 @@ function M.list_routines(url)
     local routine_name = row[3] or ""
     local args = row[4] or ""
     local kind = row[5] or "function"
+    -- PostgreSQL 14+ prefixes procedure arguments with an explicit "IN" mode
+    -- ("IN order_id integer, IN new_status text") while functions omit it.
+    -- Strip the bare IN so functions and procedures display consistently;
+    -- meaningful modes (INOUT/OUT/VARIADIC) are kept.
+    args = args:gsub("^IN ", ""):gsub(", IN ", ", ")
     local qualified = (schema_name == "public") and routine_name or (schema_name .. "." .. routine_name)
     table.insert(result, {
       name = qualified,
