@@ -10,6 +10,13 @@ os.exit = function(code)
   if code and code ~= 0 then any_failure = true end
 end
 
+-- Specs that hit sqlite need a seeded tests/seed_sqlite.db (0 bytes = unseeded)
+local db = "tests/seed_sqlite.db"
+if vim.fn.getfsize(db) <= 0 then
+  print("WARNING: " .. db .. " is missing or empty; DB-backed specs will fail.")
+  print("Seed it first:  just seed-sqlite   (or: sqlite3 " .. db .. " < tests/seed_sqlite.sql)\n")
+end
+
 local spec_dir = vim.fn.fnamemodify("tests/spec", ":p")
 local files = vim.fn.glob(spec_dir .. "/*_spec.lua", false, true)
 table.sort(files)
