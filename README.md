@@ -26,6 +26,25 @@ Connect to PostgreSQL, MySQL, SQLite, DuckDB, or MotherDuck and edit tables like
 </td>
 </tr></table>
 
+> ### 🛠️ Maintained fork
+>
+> This is a community-maintained fork of [joryeugene/dadbod-grip.nvim](https://github.com/joryeugene/dadbod-grip.nvim), created by [@joryeugene](https://github.com/joryeugene). It is kept active while upstream is paused; fixes are offered back upstream, and the fork aims to stay merge-compatible so the original author can pull them in if development resumes.
+>
+> **Install** by pointing your plugin manager at `GlebYavorski/dadbod-grip.nvim`:
+> ```lua
+> { "GlebYavorski/dadbod-grip.nvim", version = "*" }
+> ```
+>
+> **What this fork adds over upstream:**
+> - **Cell value in a full split buffer** (`gB`) with JSON pretty-printing — comfortable editing of large JSON/text ([#18](https://github.com/joryeugene/dadbod-grip.nvim/issues/18))
+> - **JSON tree drilldown** (`gK`): navigate nested JSON/JSONB keys as an expandable tree; yank values or JSONPaths
+> - **Reverse foreign-key navigation** (`gr`): jump from a row to the rows that reference it
+> - **Multi-cursor column set** (`gU`): stage one value across every visible row of a column
+> - **Enum hints** in the cell editor for low-cardinality columns
+> - **Data-integrity fixes:** `:GripExplain` no longer executes `UPDATE`/`DELETE` via `EXPLAIN ANALYZE` ([#22](https://github.com/joryeugene/dadbod-grip.nvim/issues/22)); setting a cell to NULL no longer writes the literal string `__GRIP_NULL__` ([#24](https://github.com/joryeugene/dadbod-grip.nvim/issues/24)); NULL vs empty-string handling corrected across export, filtering, and aggregates
+> - Merged stalled upstream PRs: multibyte/CJK cell alignment, SQL Server read-only adapter, Postgres routines, focused ER diagram
+> - Corrected release tags so `version = "*"` resolves to current code ([#14](https://github.com/joryeugene/dadbod-grip.nvim/issues/14), [#19](https://github.com/joryeugene/dadbod-grip.nvim/issues/19))
+
 **Connect to PostgreSQL, MySQL, SQLite, or DuckDB and edit tables like Vim buffers.** Rows stage with color coding, preview as SQL, and commit in a single transaction. Undo committed changes. Follow foreign keys through a breadcrumb trail. Open any Markdown file as a runnable SQL notebook and execute individual blocks with `<C-CR>`. Generate SQL from natural language.
 
 A command palette (`<C-p>`) surfaces every action without memorizing keymaps. The query pad has SQL syntax highlighting, a formatter, and built-in completion. Every Vim motion works. Nothing installs outside Neovim.

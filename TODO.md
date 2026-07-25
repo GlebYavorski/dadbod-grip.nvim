@@ -69,6 +69,6 @@ Not committed to any release. Roughly ordered by expected impact.
 - [ ] Schema diff across connections (compare two databases, show table/column drift)
 - [ ] Data lineage visualization (trace FK chains as ASCII graph)
 - [ ] Lua scripting hooks (user-defined pre/post query hooks for logging, auditing, transforms)
-- [ ] JSON path drilldown: for JSON/JSONB cells, navigate nested keys as a tree in the K-view; follow json paths the way `gf` follows FK chains
+- [x] JSON path drilldown (`gK`: for JSON/JSONB cells, navigate nested keys as an expandable tree; `y` yanks the value, `gy` yanks the JSONPath; also reachable from the K-view): shipped
 - [ ] Query sharing bundle (`:GripBundle` exports current query + connection scheme without credentials as a `.grip` file; recipient opens with `:GripOpen file.grip`)
 - [ ] Schema change detector: on session start, diff current schema against last-seen snapshot in `.grip/schema_snapshot.json` and notify if columns were added, dropped, or renamed
