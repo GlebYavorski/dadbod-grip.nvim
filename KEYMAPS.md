@@ -103,6 +103,7 @@ The editor starts in INSERT mode. Press `<Esc>` to drop into NORMAL for Vim moti
 | Key | Action |
 |-----|--------|
 | `gf` | Follow foreign key under cursor |
+| `gm` | Reverse FK: jump to rows in other tables referencing the current row |
 | `<C-o>` | Go back in FK navigation stack |
 
 ### Inspection
@@ -244,8 +245,8 @@ Note: explain query plan is accessible via `gQ` (removed from tab system).
 Available for future features. Check this list before assigning a new `g` keymap:
 
 **Uppercase (free):** `gM`, `gZ` (`gB` taken in grid: open cell in buffer; `gU` taken in grid: column set for all visible rows; `gK` taken in grid: JSON tree drilldown)
-**Lowercase (free in grid):** `gm` (`gr` taken in grid: reverse FK navigation)
-**Lowercase (free in sidebar):** `gm`, `gr`
+**Lowercase (free in grid):** _(none of the plain `g` + lowercase pairs — `gm` now reverse FK)_
+**Lowercase (free in sidebar):** `gr` (avoid `gr` in grid: collides with nvim 0.11+ `gr*` LSP prefix)
 
 ## Command Palette
 

@@ -270,7 +270,7 @@ Action names (stable API) with their defaults:
 
   Grid: FK navigation ~
   grid_fk_follow   = "gf"      grid_fk_back     = "<C-o>"
-  grid_fk_referencing = "gr"   -- reverse FK: rows referencing this row
+  grid_fk_referencing = "gm"   -- reverse FK: rows referencing this row
 
   Grid: workflow ~
   grid_watch       = "gW"      grid_write_mode  = "g!"
@@ -557,7 +557,7 @@ SORT / FILTER / PAGINATION ~
 FK NAVIGATION ~
                                                             *grip-fk-nav*
   gf              Follow foreign key under cursor to referenced row
-  gr              Reverse FK: jump to rows referencing the current row
+  gm              Reverse FK: jump to rows referencing the current row
   <C-o>           Go back in FK navigation stack
 
 ANALYSIS AND EXPORT ~

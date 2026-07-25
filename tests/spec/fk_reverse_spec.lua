@@ -407,6 +407,16 @@ test("grid_fk_referencing has a default key", function()
   end
 end)
 
+test("grid_fk_referencing does not shadow Neovim's gr LSP prefix", function()
+  -- Neovim 0.11+ ships global default keymaps grn/gra/grr/gri/grt/grx
+  -- (LSP rename/code-action/references/...). Using bare "gr" as a grid
+  -- default makes "gr" a prefix: pressing it waits timeoutlen and which-key
+  -- surfaces the LSP submenu instead of firing reverse-FK navigation.
+  local km = require("dadbod-grip.keymaps")
+  assert(km.defaults.grid_fk_referencing ~= "gr",
+    "grid_fk_referencing must not be 'gr' — collides with nvim 0.11+ gr* LSP prefix")
+end)
+
 --- Summary
 print(string.format("\nfk_reverse_spec: %d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

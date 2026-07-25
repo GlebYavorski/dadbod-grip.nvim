@@ -144,7 +144,8 @@ M.defaults = {
 
   -- ── Grid: FK navigation ────────────────────────────────────────────────
   grid_fk_follow   = "gf",       -- follow foreign key to referenced table
-  grid_fk_referencing = "gr",    -- reverse FK: rows in other tables referencing this row
+  grid_fk_referencing = "gm",    -- reverse FK: rows in other tables referencing this row
+                                 -- (not "gr": collides with nvim 0.11+ gr* LSP prefix)
   grid_fk_back     = "<C-o>",    -- back in FK navigation stack
 
   -- ── Grid: workflow ─────────────────────────────────────────────────────

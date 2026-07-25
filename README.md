@@ -38,7 +38,7 @@ Connect to PostgreSQL, MySQL, SQLite, DuckDB, or MotherDuck and edit tables like
 > **What this fork adds over upstream:**
 > - **Cell value in a full split buffer** (`gB`) with JSON pretty-printing — comfortable editing of large JSON/text ([#18](https://github.com/joryeugene/dadbod-grip.nvim/issues/18))
 > - **JSON tree drilldown** (`gK`): navigate nested JSON/JSONB keys as an expandable tree; yank values or JSONPaths
-> - **Reverse foreign-key navigation** (`gr`): jump from a row to the rows that reference it
+> - **Reverse foreign-key navigation** (`gm`): jump from a row to the rows that reference it
 > - **Multi-cursor column set** (`gU`): stage one value across every visible row of a column
 > - **Enum hints** in the cell editor for low-cardinality columns
 > - **Data-integrity fixes:** `:GripExplain` no longer executes `UPDATE`/`DELETE` via `EXPLAIN ANALYZE` ([#22](https://github.com/joryeugene/dadbod-grip.nvim/issues/22)); setting a cell to NULL no longer writes the literal string `__GRIP_NULL__` ([#24](https://github.com/joryeugene/dadbod-grip.nvim/issues/24)); NULL vs empty-string handling corrected across export, filtering, and aggregates
@@ -209,7 +209,7 @@ work without credentials.
 ### Query and Navigation
 - **Sort, filter, and pagination** using `s`/`S` to sort, `f`/`<C-f>`/`F` to filter, `gp`/`gP` for saved filter presets, and `H`/`L` to page (or `]p`/`[p`).
 - **Foreign key navigation** via `gf` to follow a FK to its referenced row, and `<C-o>` to go back.
-- **Reverse FK navigation** via `gr` to open the rows in other tables that reference the current row (e.g. `orders.user_id ← users`). One referencing table opens directly; several show a picker of `child_table.fk_column`. Hops chain: users → orders → order_items.
+- **Reverse FK navigation** via `gm` to open the rows in other tables that reference the current row (e.g. `orders.user_id ← users`). One referencing table opens directly; several show a picker of `child_table.fk_column`. Hops chain: users → orders → order_items.
 - **Query history** via `gh` or `:GripHistory` browsing all executed queries with timestamp and SQL preview, stored in `.grip/history.jsonl`.
 - **Data profiling** via `gR` or `:GripProfile` showing sparkline distributions, completeness, cardinality, and top values per column.
 - **Column statistics** via `gS` showing count, distinct, nulls, min/max, and top values.
@@ -370,7 +370,7 @@ No selection needed for whole-page edits: `gU` in normal mode stages the same va
 | Key | Action |
 |-----|--------|
 | `gf` | Follow foreign key under cursor |
-| `gr` | Reverse FK: jump to rows referencing the current row |
+| `gm` | Reverse FK: jump to rows referencing the current row |
 | `<C-o>` | Go back in FK navigation stack |
 
 ### Surface Navigation and Depth Views (1-9)
@@ -724,7 +724,7 @@ Common actions worth knowing:
 | `open_notebook` | `gn` | query pad |
 | `grid_apply` | `a` | grid |
 | `grid_fk_follow` | `gf` | grid |
-| `grid_fk_referencing` | `gr` | grid |
+| `grid_fk_referencing` | `gm` | grid |
 | `grid_profile` | `gR` | grid |
 | `grid_col_stats` | `gS` | grid |
 | `connections` | `gC` | all |
