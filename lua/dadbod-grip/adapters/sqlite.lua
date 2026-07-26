@@ -4,6 +4,8 @@
 
 local db_util  = require("dadbod-grip.db")
 local adapters = require("dadbod-grip.adapters")
+local sql_util = require("dadbod-grip.sql")
+local esc      = sql_util.escape_literal
 
 local M = {}
 
@@ -166,7 +168,7 @@ function M.get_referencing_foreign_keys(table_name, url)
     WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%%'
       AND lower(p."table") = lower('%s')
     ORDER BY m.name, p.id, p.seq
-  ]], tbl:gsub("'", "''"))
+  ]], esc(tbl))
 
   local stdout, stderr, code = sqlite3(db_path, sql_str)
   if code ~= 0 then
@@ -320,7 +322,7 @@ function M.get_constraints(table_name, url)
 
   local stdout, stderr, code = sqlite3(db_path,
     string.format("SELECT sql FROM sqlite_master WHERE type='table' AND name='%s'",
-      tbl:gsub("'", "''")))
+      esc(tbl)))
   if code ~= 0 then
     return {}, stderr ~= "" and stderr or "Failed to query DDL"
   end

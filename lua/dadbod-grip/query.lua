@@ -3,6 +3,7 @@
 -- Query spec is a plain Lua table (a value, not an object).
 
 local sql_mod = require("dadbod-grip.sql")
+local esc = sql_mod.escape_literal
 
 local M = {}
 
@@ -140,7 +141,7 @@ function M.build_filter_clause(col, op, value)
     if tonumber(v) then
       return v  -- raw numeric string, e.g. "42", "3.14", "-1"
     end
-    return "'" .. tostring(v):gsub("'", "''") .. "'"
+    return "'" .. esc(tostring(v)) .. "'"
   end
 
   -- IN: parse comma-separated list, quote each part

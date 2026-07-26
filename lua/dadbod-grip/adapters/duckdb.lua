@@ -4,6 +4,8 @@
 
 local db_util  = require("dadbod-grip.db")
 local adapters = require("dadbod-grip.adapters")
+local sql_util = require("dadbod-grip.sql")
+local esc      = sql_util.escape_literal
 
 local M = {}
 
@@ -51,7 +53,7 @@ local function build_attach_prefix(url)
     -- Escape single quotes in the DSN: it is a string literal here, and an
     -- unescaped quote breaks every subsequent query on this connection.
     -- Matches the validation path in M.attach().
-    local dsn_lit = (a.dsn:gsub("'", "''"))
+    local dsn_lit = (esc(a.dsn))
     table.insert(parts, string.format("ATTACH IF NOT EXISTS '%s' AS %s;", dsn_lit, a.alias))
   end
   return table.concat(parts, "\n") .. "\n"
@@ -253,7 +255,7 @@ function M.get_primary_keys(table_name, url)
       WHERE database_name = '%s'
         AND table_name = '%s'
         AND constraint_type = 'PRIMARY KEY'
-    ]], catalog:gsub("'", "''"), tbl:gsub("'", "''"))
+    ]], esc(catalog), esc(tbl))
   else
     -- Main DB: use duckdb_constraints() with a string-literal database_name filter
     -- (same reason as get_column_info — information_schema fails with attachments).
@@ -265,7 +267,7 @@ function M.get_primary_keys(table_name, url)
         AND schema_name = '%s'
         AND table_name = '%s'
         AND constraint_type = 'PRIMARY KEY'
-    ]], main_catalog:gsub("'", "''"), schema:gsub("'", "''"), tbl:gsub("'", "''"))
+    ]], esc(main_catalog), esc(schema), esc(tbl))
   end
 
   local stdout, stderr, code = duckdb(db_path, sql_str, nil, url)
@@ -310,7 +312,7 @@ function M.get_column_info(table_name, url)
       WHERE database_name = '%s'
         AND table_name = '%s'
       ORDER BY schema_name, column_index
-    ]], catalog:gsub("'", "''"), tbl:gsub("'", "''"))
+    ]], esc(catalog), esc(tbl))
   else
     -- Main DB: use duckdb_columns() with a string-literal database_name filter.
     -- information_schema.columns fails when attachments are present (DuckDB enumerates
@@ -331,7 +333,7 @@ function M.get_column_info(table_name, url)
         AND schema_name = '%s'
         AND table_name = '%s'
       ORDER BY column_index
-    ]], main_catalog:gsub("'", "''"), schema:gsub("'", "''"), tbl:gsub("'", "''"))
+    ]], esc(main_catalog), esc(schema), esc(tbl))
   end
 
   local stdout, stderr, code = duckdb(db_path, info_sql, nil, url)
@@ -383,7 +385,7 @@ function M.get_foreign_keys(table_name, url)
       AND kcu.ordinal_position = kcu2.ordinal_position
     WHERE kcu.table_schema = '%s'
       AND kcu.table_name = '%s'
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = duckdb(db_path, fk_sql, nil, url)
   if code ~= 0 then
@@ -436,7 +438,7 @@ function M.get_referencing_foreign_keys(table_name, url)
     WHERE kcu2.table_schema = '%s'
       AND kcu2.table_name = '%s'
     ORDER BY kcu.table_schema, kcu.table_name, rc.constraint_name, kcu.ordinal_position
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = duckdb(db_path, fk_sql, nil, url)
   if code ~= 0 then
@@ -564,7 +566,7 @@ function M.get_indexes(table_name, url)
 
   local catalog, schema, tbl = split_catalog_schema_table(url, table_name)
   local is_prefix = catalog and (catalog .. ".") or ""
-  local db_filter = catalog and string.format("di.database_name = '%s' AND ", catalog:gsub("'", "''")) or ""
+  local db_filter = catalog and string.format("di.database_name = '%s' AND ", esc(catalog)) or ""
 
   local idx_sql = string.format([[
     SELECT
@@ -585,7 +587,7 @@ function M.get_indexes(table_name, url)
     FROM duckdb_indexes() di
     WHERE %sdi.schema_name = '%s' AND di.table_name = '%s'
     ORDER BY is_primary DESC, index_name
-  ]], is_prefix, is_prefix, db_filter, schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], is_prefix, is_prefix, db_filter, esc(schema), esc(tbl))
 
   local stdout, stderr, code = duckdb(db_path, idx_sql, nil, url)
   if code ~= 0 then
@@ -616,7 +618,7 @@ function M.get_constraints(table_name, url)
   if not db_path then return {}, "Invalid DuckDB URL: " .. url end
 
   local catalog, schema, tbl = split_catalog_schema_table(url, table_name)
-  local db_filter = catalog and string.format("database_name = '%s' AND ", catalog:gsub("'", "''")) or ""
+  local db_filter = catalog and string.format("database_name = '%s' AND ", esc(catalog)) or ""
 
   -- duckdb_constraints() returns CHECK and UNIQUE with column lists and expressions
   local sql_str = string.format([[
@@ -632,7 +634,7 @@ function M.get_constraints(table_name, url)
       AND table_name = '%s'
       AND constraint_type IN ('CHECK', 'UNIQUE', 'NOT NULL')
     ORDER BY constraint_type, constraint_name
-  ]], db_filter, schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], db_filter, esc(schema), esc(tbl))
 
   local stdout, stderr, code = duckdb(db_path, sql_str, nil, url)
   if code ~= 0 then
@@ -659,7 +661,7 @@ function M.get_table_stats(table_name, url)
   if not db_path then return nil, "Invalid DuckDB URL: " .. url end
 
   local catalog, schema, tbl = split_catalog_schema_table(url, table_name)
-  local db_filter = catalog and string.format("database_name = '%s' AND ", catalog:gsub("'", "''")) or ""
+  local db_filter = catalog and string.format("database_name = '%s' AND ", esc(catalog)) or ""
 
   local stats_sql = string.format([[
     SELECT
@@ -667,7 +669,7 @@ function M.get_table_stats(table_name, url)
       0 AS size_bytes
     FROM duckdb_tables()
     WHERE %sschema_name = '%s' AND table_name = '%s'
-  ]], db_filter, schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], db_filter, esc(schema), esc(tbl))
 
   local stdout, stderr, code = duckdb(db_path, stats_sql, nil, url)
   if code ~= 0 then
@@ -795,7 +797,7 @@ function M.attach(url, dsn, alias)
   if ext then
     test_sql = string.format("INSTALL %s; LOAD %s;\n", ext, ext)
   end
-  test_sql = test_sql .. string.format("ATTACH IF NOT EXISTS '%s' AS %s;\n", dsn:gsub("'", "''"), alias)
+  test_sql = test_sql .. string.format("ATTACH IF NOT EXISTS '%s' AS %s;\n", esc(dsn), alias)
   test_sql = test_sql .. "SELECT 42;"
 
   -- Validate in-memory: avoids acquiring a write lock on the main db file.

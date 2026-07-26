@@ -5,21 +5,15 @@
 local db_util  = require("dadbod-grip.db")
 local adapters = require("dadbod-grip.adapters")
 local sql_util = require("dadbod-grip.sql")
+local esc = sql_util.escape_literal
 
 local M = {}
 
 local DEFAULT_TIMEOUT = 10000
 
---- Split a possibly schema-qualified table name and unquote both parts.
---- information_schema stores bare names, so quoted identifiers must be stripped.
-local function split_table_name(table_name, default_schema)
-  local schema, tbl = table_name:match("^([^.]+)%.(.+)$")
-  if not schema then
-    schema = default_schema
-    tbl = table_name
-  end
-  return sql_util.unquote_ident(schema), sql_util.unquote_ident(tbl)
-end
+--- Split a possibly schema-qualified table name; callers pass the connected
+--- database as the default schema.
+local split_table_name = sql_util.split_table_name
 
 --- Parse a dadbod-style MySQL URL into connection components.
 --- "mysql://user:pass@host:port/dbname" → {user, pass, host, port, dbname}
@@ -177,7 +171,7 @@ function M.get_primary_keys(table_name, url)
       AND table_schema = '%s'
       AND table_name = '%s'
     ORDER BY ordinal_position
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = mysql_query(parsed, sql_str)
   if code ~= 0 then
@@ -222,7 +216,7 @@ function M.get_column_info(table_name, url)
     WHERE c.TABLE_SCHEMA = '%s'
       AND c.TABLE_NAME = '%s'
     ORDER BY c.ORDINAL_POSITION
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = mysql_query(parsed, info_sql)
   if code ~= 0 then
@@ -267,7 +261,7 @@ function M.get_foreign_keys(table_name, url)
       AND kcu.TABLE_NAME = '%s'
       AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
     ORDER BY kcu.ORDINAL_POSITION
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = mysql_query(parsed, fk_sql)
   if code ~= 0 then
@@ -307,7 +301,7 @@ function M.get_referencing_foreign_keys(table_name, url)
     WHERE kcu.REFERENCED_TABLE_SCHEMA = '%s'
       AND kcu.REFERENCED_TABLE_NAME = '%s'
     ORDER BY kcu.TABLE_NAME, kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = mysql_query(parsed_url, fk_sql)
   if code ~= 0 then
@@ -447,7 +441,7 @@ function M.get_indexes(table_name, url)
     WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s'
     GROUP BY INDEX_NAME, NON_UNIQUE
     ORDER BY INDEX_NAME = 'PRIMARY' DESC, INDEX_NAME
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = mysql_query(parsed_url, idx_sql)
   if code ~= 0 then
@@ -502,7 +496,7 @@ function M.get_constraints(table_name, url)
       AND tc.TABLE_NAME = '%s'
       AND tc.CONSTRAINT_TYPE IN ('CHECK', 'UNIQUE')
     ORDER BY tc.CONSTRAINT_TYPE, tc.CONSTRAINT_NAME
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = mysql_query(parsed, sql_str)
   if code ~= 0 then
@@ -535,7 +529,7 @@ function M.get_table_stats(table_name, url)
       DATA_LENGTH + INDEX_LENGTH AS size_bytes
     FROM information_schema.TABLES
     WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s'
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = mysql_query(parsed_url, stats_sql)
   if code ~= 0 then

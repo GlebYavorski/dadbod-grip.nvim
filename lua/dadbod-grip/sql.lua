@@ -8,6 +8,16 @@ local M = {}
 -- string → 'value' with single-quote escaping
 -- number → n
 -- bool   → TRUE / FALSE
+-- Escape a value for embedding in a single-quoted SQL string literal.
+-- Only the quote doubling: callers add the surrounding quotes themselves,
+-- which is what every catalog query in the adapters needs.
+-- Returns exactly one value, so it is safe as the last argument to
+-- string.format (a bare :gsub() there leaks its match count as an extra arg).
+function M.escape_literal(v)
+  return (tostring(v):gsub("'", "''"))
+end
+local escape_literal = M.escape_literal
+
 function M.quote_value(v)
   if v == nil then
     return "NULL"
@@ -16,9 +26,7 @@ function M.quote_value(v)
   elseif type(v) == "number" then
     return tostring(v)
   else
-    -- Escape single quotes by doubling them
-    local escaped = tostring(v):gsub("'", "''")
-    return "'" .. escaped .. "'"
+    return "'" .. escape_literal(v) .. "'"
   end
 end
 
@@ -48,6 +56,20 @@ function M.unquote_ident(name)
     table.insert(parts, part)
   end
   return table.concat(parts, ".")
+end
+
+-- Split a possibly schema-qualified table name and unquote both parts.
+-- Catalog tables (information_schema, pg_catalog, …) store bare names, so
+-- quoted identifiers must be stripped before they can be compared.
+-- default_schema is used when the name carries no qualifier; adapters pass
+-- their own ("public", "dbo", the connected database, …).
+function M.split_table_name(table_name, default_schema)
+  local schema, tbl = table_name:match("^([^.]+)%.(.+)$")
+  if not schema then
+    schema = default_schema
+    tbl = table_name
+  end
+  return M.unquote_ident(schema), M.unquote_ident(tbl)
 end
 
 -- M.build_update(table_name, pk_values, changes) → string

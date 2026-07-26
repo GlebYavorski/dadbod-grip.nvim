@@ -3,6 +3,7 @@
 -- All functions return (result, err). Never throw.
 
 local adapters = require("dadbod-grip.adapters")
+local esc = require("dadbod-grip.sql").escape_literal
 
 local M = {}
 
@@ -362,7 +363,7 @@ end
 --- Returns (cols, nil) on success where cols = { {column_name, data_type} }.
 --- Returns (nil, err_string) on failure.
 function M.describe_file(path, url)
-  local safe = path:gsub("'", "''")
+  local safe = esc(path)
   local sql  = string.format("DESCRIBE SELECT * FROM '%s' LIMIT 0", safe)
   local result, err = M.query(sql, url)
   if err or not result then return nil, err or "describe failed" end

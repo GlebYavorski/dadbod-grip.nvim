@@ -6,6 +6,8 @@
 
 local M = {}
 
+local esc = require("dadbod-grip.sql").escape_literal
+
 local _ag = vim.api.nvim_create_augroup("DadbodGripCompletion", { clear = true })
 
 local CACHE_TTL = 300  -- 5 minutes
@@ -326,7 +328,7 @@ function M.complete(before, url, aliases)
           for _, att in ipairs(atts) do
             if att.alias == q then
               local db = require("dadbod-grip.db")
-              local safe_q = q:gsub("'", "''")
+              local safe_q = esc(q)
               local sql = string.format(
                 "SELECT table_name FROM duckdb_tables() WHERE database_name = '%s' AND internal = false"
                   .. " UNION ALL SELECT view_name FROM duckdb_views() WHERE database_name = '%s' AND internal = false",
@@ -365,8 +367,8 @@ function M.complete(before, url, aliases)
       -- Use duckdb_columns() which works for all attachment types (SQLite, PG, etc.).
       -- Never use catalog.information_schema: SQLite attachments have none.
       local db = require("dadbod-grip.db")
-      local safe_alias = ctx.alias:gsub("'", "''")
-      local safe_table = ctx.table:gsub("'", "''")
+      local safe_alias = esc(ctx.alias)
+      local safe_table = esc(ctx.table)
       local sql = string.format(
         "SELECT column_name, data_type FROM duckdb_columns() WHERE database_name = '%s' AND table_name = '%s' AND internal = false",
         safe_alias, safe_table

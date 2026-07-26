@@ -3,6 +3,7 @@
 
 local data    = require("dadbod-grip.data")
 local sql     = require("dadbod-grip.sql")
+local esc = sql.escape_literal
 local db      = require("dadbod-grip.db")
 local qmod    = require("dadbod-grip.query")
 local editor  = require("dadbod-grip.editor")
@@ -1499,7 +1500,7 @@ local function format_export(rows, cols, format, table_name)
         if v == nil then
           table.insert(vals, "NULL")
         else
-          table.insert(vals, "'" .. tostring(v):gsub("'", "''") .. "'")
+          table.insert(vals, "'" .. esc(tostring(v)) .. "'")
         end
       end
       table.insert(lines, string.format(
@@ -1763,7 +1764,7 @@ local function fetch_view_stats(table_name, url, session)
   for _, c in ipairs(cols) do
     local safe_col = c.column_name:gsub('"', '""')
     local quoted_col = '"' .. safe_col .. '"'
-    local quoted_name = c.column_name:gsub("'", "''")
+    local quoted_name = esc(c.column_name)
     parts[#parts + 1] = string.format(
       "SELECT '%s' AS col_name, COUNT(*) AS total_rows, COUNT(%s) AS non_null,"
       .. " COUNT(*) - COUNT(%s) AS null_count, COUNT(DISTINCT %s) AS distinct_count,"

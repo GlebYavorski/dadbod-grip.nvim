@@ -5,20 +5,15 @@
 local db_util  = require("dadbod-grip.db")
 local adapters = require("dadbod-grip.adapters")
 local sql_util = require("dadbod-grip.sql")
+local esc = sql_util.escape_literal
 
 local M = {}
 
 local DEFAULT_TIMEOUT = 30000
 
---- Split a possibly schema-qualified table name and unquote both parts.
---- information_schema stores bare names, so quoted identifiers must be stripped.
+--- Split a possibly schema-qualified table name; unqualified names are "public".
 local function split_table_name(table_name)
-  local schema, tbl = table_name:match("^([^.]+)%.(.+)$")
-  if not schema then
-    schema = "public"
-    tbl = table_name
-  end
-  return sql_util.unquote_ident(schema), sql_util.unquote_ident(tbl)
+  return sql_util.split_table_name(table_name, "public")
 end
 
 local function psql(url, sql_str, timeout_ms)
@@ -72,7 +67,7 @@ function M.get_primary_keys(table_name, url)
       AND tc.table_schema = '%s'
       AND tc.table_name = '%s'
     ORDER BY kcu.ordinal_position
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = psql(url, sql_str)
   if code ~= 0 then
@@ -115,8 +110,8 @@ function M.get_column_info(table_name, url)
     WHERE c.table_schema = '%s'
       AND c.table_name = '%s'
     ORDER BY c.ordinal_position
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"),
-      schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl),
+      esc(schema), esc(tbl))
 
   local stdout, stderr, code = psql(url, info_sql)
   if code ~= 0 then
@@ -157,7 +152,7 @@ function M.get_foreign_keys(table_name, url)
     WHERE tc.constraint_type = 'FOREIGN KEY'
       AND tc.table_schema = '%s'
       AND tc.table_name = '%s'
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = psql(url, fk_sql)
   if code ~= 0 then
@@ -202,7 +197,7 @@ function M.get_referencing_foreign_keys(table_name, url)
       AND ccu.table_schema = '%s'
       AND ccu.table_name = '%s'
     ORDER BY kcu.table_schema, kcu.table_name, tc.constraint_name, kcu.ordinal_position
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = psql(url, fk_sql)
   if code ~= 0 then
@@ -383,7 +378,7 @@ function M.get_routine_source(routine_name, url)
       AND p.proname = '%s'
     ORDER BY p.oid
     LIMIT 1
-  ]], schema:gsub("'", "''"), routine:gsub("'", "''"))
+  ]], esc(schema), esc(routine))
   end
 
   local stdout, stderr, code = psql(url, sql_str)
@@ -421,7 +416,7 @@ function M.get_indexes(table_name, url)
     JOIN pg_index i ON i.indexrelid = c.oid
     WHERE pi.schemaname = '%s' AND pi.tablename = '%s'
     ORDER BY indisprimary DESC, indexname
-  ]], schema:gsub("'", "''"), schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(schema), esc(tbl))
 
   local stdout, stderr, code = psql(url, idx_sql)
   if code ~= 0 then
@@ -468,7 +463,7 @@ function M.get_constraints(table_name, url)
       AND tc.table_name = '%s'
       AND tc.constraint_type IN ('CHECK', 'UNIQUE')
     ORDER BY tc.constraint_type, tc.constraint_name
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = psql(url, sql_str)
   if code ~= 0 then
@@ -499,7 +494,7 @@ function M.get_table_stats(table_name, url)
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = '%s' AND c.relname = '%s'
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local stdout, stderr, code = psql(url, stats_sql)
   if code ~= 0 then

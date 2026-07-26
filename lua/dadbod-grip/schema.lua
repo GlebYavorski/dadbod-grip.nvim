@@ -5,6 +5,7 @@
 local db      = require("dadbod-grip.db")
 local VERSION = require("dadbod-grip.version")
 local ui      = require("dadbod-grip.ui")
+local esc     = require("dadbod-grip.sql").escape_literal
 
 local M = {}
 
@@ -125,7 +126,7 @@ end
 --- Uses DuckDB's DESCRIBE to get column names and types without needing a DB.
 local function fetch_file_schema(state)
   local file_url = state.url
-  local safe_url = file_url:gsub("'", "''")
+  local safe_url = esc(file_url)
   local sql = string.format("DESCRIBE SELECT * FROM '%s' LIMIT 0", safe_url)
   local result, err = db.query(sql, "duckdb::memory:")
   if not result then

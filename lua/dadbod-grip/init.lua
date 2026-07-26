@@ -6,6 +6,7 @@ local data   = require("dadbod-grip.data")
 local view   = require("dadbod-grip.view")
 local editor = require("dadbod-grip.editor")
 local sql    = require("dadbod-grip.sql")
+local esc = sql.escape_literal
 local query  = require("dadbod-grip.query")
 local ui     = require("dadbod-grip.ui")
 
@@ -91,7 +92,7 @@ local function resolve_query(arg, page_size)
   if is_queryable_file(arg) then
     if arg:match("^https?://") then
       -- Remote URL: pass through to DuckDB httpfs
-      local file_sql = string.format("SELECT * FROM '%s'", arg:gsub("'", "''"))
+      local file_sql = string.format("SELECT * FROM '%s'", esc(arg))
       return query.new_raw(file_sql, page_size), nil, arg
     end
     local path = arg
@@ -102,7 +103,7 @@ local function resolve_query(arg, page_size)
     if vim.fn.filereadable(path) == 0 then
       return nil, "File not found: " .. path
     end
-    local file_sql = string.format("SELECT * FROM '%s'", path:gsub("'", "''"))
+    local file_sql = string.format("SELECT * FROM '%s'", esc(path))
     return query.new_raw(file_sql, page_size), nil, path
   end
 
@@ -209,7 +210,7 @@ local function do_apply_file_writeback(bufnr, session)
   }
   local fmt = fmt_map[ext] or "CSV"
 
-  local safe_path = file_path:gsub("'", "''")
+  local safe_path = esc(file_path)
   local stmts = {}
 
   -- 1. Create temp table with synthetic row-number PK
@@ -2322,7 +2323,7 @@ function M.setup(opts)
     path = vim.fn.expand(path)
     -- S3 prefix (no file extension): open query pad pre-filled with glob()
     if path:match("^s3://") and not path:match("%.[a-zA-Z0-9]+$") then
-      local safe = path:gsub("'", "''")
+      local safe = esc(path)
       local sql_str = string.format("SELECT * FROM glob('%s*') LIMIT 100", safe)
       local cur = connections.current()
       require("dadbod-grip.query_pad").open(cur and cur.url or "", { initial_sql = sql_str })

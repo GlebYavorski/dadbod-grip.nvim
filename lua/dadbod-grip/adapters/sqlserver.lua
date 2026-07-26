@@ -3,6 +3,7 @@
 
 local adapters = require("dadbod-grip.adapters")
 local sql_util = require("dadbod-grip.sql")
+local esc = sql_util.escape_literal
 
 local M = { readonly = true }
 
@@ -37,13 +38,9 @@ local function parse_url(url)
   }
 end
 
+--- Split a possibly schema-qualified table name; unqualified names are "dbo".
 local function split_table_name(table_name, default_schema)
-  local schema, tbl = table_name:match("^([^.]+)%.(.+)$")
-  if not schema then
-    schema = default_schema or "dbo"
-    tbl = table_name
-  end
-  return sql_util.unquote_ident(schema), sql_util.unquote_ident(tbl)
+  return sql_util.split_table_name(table_name, default_schema or "dbo")
 end
 
 local function sqlcmd(parsed, sql_str, timeout_ms)
@@ -200,7 +197,7 @@ function M.get_column_info(table_name, url)
     WHERE TABLE_SCHEMA = '%s'
       AND TABLE_NAME = '%s'
     ORDER BY ORDINAL_POSITION
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local result, err = run_query(sql_str, url)
   if not result then return nil, err end
@@ -230,7 +227,7 @@ function M.get_primary_keys(table_name, url)
       AND tc.TABLE_SCHEMA = '%s'
       AND tc.TABLE_NAME = '%s'
     ORDER BY kcu.ORDINAL_POSITION
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local result, err = run_query(sql_str, url)
   if not result then return {}, err end
@@ -262,7 +259,7 @@ function M.get_foreign_keys(table_name, url)
       AND tc.TABLE_SCHEMA = '%s'
       AND tc.TABLE_NAME = '%s'
     ORDER BY kcu.ORDINAL_POSITION
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local result, err = run_query(sql_str, url)
   if not result then return {}, err end
@@ -320,7 +317,7 @@ function M.get_indexes(table_name, url)
       AND i.name IS NOT NULL
     GROUP BY i.name, i.is_primary_key, i.is_unique
     ORDER BY i.is_primary_key DESC, i.name
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local result, err = run_query(sql_str, url)
   if not result then return {}, err end
@@ -348,7 +345,7 @@ function M.get_constraints(table_name, url)
       AND tc.TABLE_NAME = '%s'
       AND tc.CONSTRAINT_TYPE IN ('CHECK', 'UNIQUE')
     ORDER BY tc.CONSTRAINT_TYPE, tc.CONSTRAINT_NAME
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local result, err = run_query(sql_str, url)
   if not result then return {}, err end
@@ -371,7 +368,7 @@ function M.get_table_stats(table_name, url)
     WHERE s.name = '%s'
       AND o.name = '%s'
       AND ps.index_id IN (0, 1)
-  ]], schema:gsub("'", "''"), tbl:gsub("'", "''"))
+  ]], esc(schema), esc(tbl))
 
   local result, err = run_query(sql_str, url)
   if not result or not result.rows[1] then return nil, err or "No stats found" end
