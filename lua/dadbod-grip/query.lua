@@ -324,12 +324,15 @@ end
 
 --- Return the user-visible SQL for a spec (no pagination wrapper).
 --- Use this to pre-fill the query pad. build_sql() is for DB execution only.
---- For raw specs returns spec.base_sql; for table specs returns "SELECT * FROM table".
+--- For raw specs returns spec.base_sql; for table specs returns
+--- 'SELECT * FROM "table"'. The identifier is quoted the same way build_sql
+--- quotes it, so the prefilled query runs as-is against case-sensitive or
+--- reserved-word tables (unquoted, Postgres folds "Organization" → organization).
 function M.clean_sql(spec)
   if spec.is_raw then
     return spec.base_sql
   else
-    return "SELECT * FROM " .. (spec.table_name or "")
+    return "SELECT * FROM " .. sql_mod.quote_ident(spec.table_name or "")
   end
 end
 

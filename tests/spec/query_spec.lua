@@ -433,6 +433,32 @@ test("filter_summary: long clauses not truncated", function()
   assert(not summary:find("...", 1, true), "must not truncate with '...': " .. summary)
 end)
 
+-- ── clean_sql ────────────────────────────────────────────────────────────────
+-- The pad-prefill SQL must quote the table name exactly like build_sql does, or
+-- running the generated query fails on case-sensitive/reserved-word tables:
+-- Postgres folds an unquoted `Organization` to `organization` (relation not found).
+
+test("clean_sql: table query quotes the identifier", function()
+  local spec = query.new_table("Organization", 100)
+  eq(query.clean_sql(spec), 'SELECT * FROM "Organization"')
+end)
+
+test("clean_sql: quotes a schema-qualified table per part", function()
+  local spec = query.new_table("public.Organization", 100)
+  eq(query.clean_sql(spec), 'SELECT * FROM "public"."Organization"')
+end)
+
+test("clean_sql: matches build_sql's FROM clause", function()
+  local spec = query.new_table("Organization", 100)
+  contains(query.build_sql(spec), query.clean_sql(spec),
+    "build_sql must start from the same quoted FROM the pad shows")
+end)
+
+test("clean_sql: raw query returns base_sql verbatim", function()
+  local spec = query.new_raw("SELECT * FROM whatever", 100)
+  eq(query.clean_sql(spec), "SELECT * FROM whatever")
+end)
+
 -- ── summary ─────────────────────────────────────────────────────────────────
 print(string.format("\nquery_spec: %d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
