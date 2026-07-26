@@ -36,6 +36,25 @@ end
 --   readonly   = false,     -- true when no PKs detected or no table_name
 -- }
 
+-- Column-name → index memo, keyed by the columns table itself.
+-- Safe because a state's `columns` list is created once (M.new deep-copies it)
+-- and never mutated afterwards — edit_copy() shares the same table across every
+-- derived state, so all of them hit the same cache entry. Weak keys let the map
+-- go away with the state it belongs to.
+-- Without this, effective_value() rebuilt the map on every call, which the
+-- renderer makes once per cell: O(rows × cols²) per redraw.
+local _col_idx_cache = setmetatable({}, { __mode = "k" })
+
+local function col_index_map(columns)
+  local map = _col_idx_cache[columns]
+  if not map then
+    map = {}
+    for i, col in ipairs(columns) do map[col] = i end
+    _col_idx_cache[columns] = map
+  end
+  return map
+end
+
 local function deep_copy(t)
   if type(t) ~= "table" then return t end
   local copy = {}
@@ -181,8 +200,7 @@ function M.get_updates(state)
     -- Only rows that exist in original rows (not inserts)
     if row_idx <= #state.rows then
       local pk_values = {}
-      local col_idx = {}
-      for i, col in ipairs(state.columns) do col_idx[col] = i end
+      local col_idx = col_index_map(state.columns)
 
       for _, pk in ipairs(state.pks) do
         local idx = col_idx[pk]
@@ -223,8 +241,7 @@ end
 -- M.get_deletes(state) → list of {row_idx, pk_values}
 function M.get_deletes(state)
   local deletes = {}
-  local col_idx = {}
-  for i, col in ipairs(state.columns) do col_idx[col] = i end
+  local col_idx = col_index_map(state.columns)
 
   for row_idx in pairs(state.deleted) do
     if row_idx <= #state.rows then
@@ -275,9 +292,7 @@ function M.effective_value(state, row_idx, field)
   end
 
   -- Fall through to original row value
-  local col_idx = {}
-  for i, col in ipairs(state.columns) do col_idx[col] = i end
-  local idx = col_idx[field]
+  local idx = col_index_map(state.columns)[field]
   if not idx then return nil end
   local raw = state.rows[row_idx] and state.rows[row_idx][idx]
   -- CSV CLIs emit "" for NULL, and db.parse_csv collapses quoted "" (real

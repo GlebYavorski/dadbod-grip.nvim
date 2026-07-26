@@ -467,15 +467,22 @@ local function build_render(session, opts)
     end
   end
 
-  -- Compute column widths across all rows including staged changes
+  -- Resolve every cell's effective value exactly once. `effs` keeps the raw
+  -- value (nil = NULL, which the render loop and the highlight loop both need
+  -- to distinguish from ""), `display_rows` is the string view that
+  -- calc_col_widths consumes. Both are indexed by column position, so nil
+  -- holes in `effs` are fine — nothing iterates them with ipairs/#.
+  local effs = {}
   local display_rows = {}
-  for _, row_idx in ipairs(ordered) do
-    local dr = {}
+  for di, row_idx in ipairs(ordered) do
+    local er, dr = {}, {}
     for i, col in ipairs(columns) do
       local eff = data.effective_value(st, row_idx, col)
-      table.insert(dr, eff or "")
+      er[i] = eff
+      dr[i] = eff or ""
     end
-    table.insert(display_rows, dr)
+    effs[di] = er
+    display_rows[di] = dr
   end
 
   -- Auto-fit: compute natural widths first (clamped to configured max);
@@ -619,25 +626,19 @@ local function build_render(session, opts)
   else
     for di, row_idx in ipairs(ordered) do
       local status = data.row_status(st, row_idx)
+      local row_effs = effs[di]
       local row_parts = { ROW_PREFIX }
       local line_byte_positions = {}  -- {col_name = {start, finish}}
       local byte_pos = ROW_PREFIX_BYTES  -- after "║ " (4 bytes, not 2)
 
       for i, col in ipairs(columns) do
-        local eff = data.effective_value(st, row_idx, col)
-        local is_null = (eff == nil or eff == "")
+        local eff = row_effs[i]
         local w = widths[col]
-        local cell_str, cell_hl = format_cell(eff, w, is_null and (eff == nil))
+        -- format_cell also returns a highlight group, but the authoritative
+        -- one is computed in the highlight pass below; ignore it here.
+        local cell_str = format_cell(eff, w, eff == nil)
 
         line_byte_positions[col] = { start = byte_pos, finish = byte_pos + #cell_str - 1 }
-
-        if status == "modified" and st.changes[row_idx] and st.changes[row_idx][col] ~= nil then
-          cell_hl = "GripModified"
-        elseif status == "deleted" then
-          cell_hl = "GripDeleted"
-        elseif status == "inserted" then
-          cell_hl = "GripInserted"
-        end
 
         table.insert(row_parts, cell_str)
         byte_pos = byte_pos + #cell_str
@@ -657,10 +658,10 @@ local function build_render(session, opts)
 
       local li = #lines
       -- Apply per-cell highlights
-      for _, col in ipairs(columns) do
+      for i, col in ipairs(columns) do
         local bp = line_byte_positions[col]
         if bp then
-          local eff = data.effective_value(st, row_idx, col)
+          local eff = row_effs[i]
           local cell_hl
           if status == "deleted" then
             cell_hl = "GripDeleted"
@@ -837,6 +838,7 @@ function M.render(bufnr, state)
     return build_render(session, opts)
   end)
   session._render = rendered  -- cache for get_cell
+  session._col_hl = nil       -- column-highlight memo belongs to the old render
 
   vim.api.nvim_set_option_value("modifiable", true, { buf = bufnr })
 
@@ -5188,15 +5190,21 @@ function M._setup_keymaps(bufnr)
       local vis_cols = r.visible_columns or (session.state and session.state.columns) or {}
       if #vis_cols == 0 then return end
 
-      vim.api.nvim_buf_clear_namespace(bufnr, _col_hl_ns, 0, -1)
-
       local cursor = vim.api.nvim_win_get_cursor(0)
       local ref_bp = resolve_row_bp(r, cursor[1])
-      if not ref_bp then return end
+      local snap = ref_bp and M._snap_col(vis_cols, ref_bp, cursor[2]) or nil
+      local col_name = snap and snap.col_name or nil
 
-      local snap = M._snap_col(vis_cols, ref_bp, cursor[2])
-      if not snap then return end
-      local col_name = snap.col_name
+      -- Nothing to redo while the cursor stays in the same column: j/k on a
+      -- 1000-row page used to clear the namespace and re-set 1001 extmarks on
+      -- every keypress. Keyed on the _render table, which render() replaces
+      -- wholesale, so a redraw invalidates this cache by itself.
+      local cached = session._col_hl
+      if cached and cached.render == r and cached.col == col_name then return end
+      session._col_hl = { render = r, col = col_name }
+
+      vim.api.nvim_buf_clear_namespace(bufnr, _col_hl_ns, 0, -1)
+      if not col_name then return end
 
       -- Highlight header row (line 2 = index 1)
       local hdr_bp = r.hdr_byte_positions and r.hdr_byte_positions[col_name]
