@@ -2129,6 +2129,18 @@ local function make_keymap_ctx(bufnr)
   local km = require("dadbod-grip.keymaps")
   local ctx = { bufnr = bufnr, km = km }
 
+  -- Session accessor, deliberately a function: re-running a query replaces the
+  -- session table wholesale, so a closure that captured the value would keep
+  -- mutating a dead session. Every section must resolve it at call time.
+  function ctx.session()
+    return M._sessions[bufnr]
+  end
+  -- Same reason, plus is_editable() is file-local and unreachable once the
+  -- sections live in their own modules.
+  function ctx.is_editable()
+    return is_editable(M._sessions[bufnr])
+  end
+
   function ctx.map(key, fn, desc)
     vim.keymap.set("n", key, fn, { buffer = bufnr, desc = desc, silent = true })
   end
@@ -2150,7 +2162,7 @@ local function make_keymap_ctx(bufnr)
     local start_line = vim.fn.line("v")
     local end_line = vim.fn.line(".")
     if start_line > end_line then start_line, end_line = end_line, start_line end
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session or not session._render then return nil end
     local r = session._render
     local ds = r.data_start or 4
@@ -2166,9 +2178,9 @@ local function make_keymap_ctx(bufnr)
 
   -- e/i: edit cell
   function ctx.edit_cell()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
-    if not is_editable(session) then
+    if not ctx.is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -2194,7 +2206,7 @@ local function setup_edit_keymaps(bufnr, ctx)
   -- q: open query pad (pre-filled with current query)
   kmap("query_pad", function()
     local query_pad = require("dadbod-grip.query_pad")
-    local session_q = M._sessions[bufnr]
+    local session_q = ctx.session()
     local s_url = session_q and session_q.url
     local initial_sql
     if session_q and session_q.query_spec then
@@ -2207,7 +2219,7 @@ local function setup_edit_keymaps(bufnr, ctx)
 
   -- r: refresh
   kmap("grid_refresh", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     if data.has_changes(session.state) then
       local staged = data.count_staged(session.state)
@@ -2224,9 +2236,9 @@ local function setup_edit_keymaps(bufnr, ctx)
 
   -- d: toggle delete row
   kmap("grid_delete", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
-    if not is_editable(session) then
+    if not ctx.is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -2240,9 +2252,9 @@ local function setup_edit_keymaps(bufnr, ctx)
 
   -- o: insert new row
   kmap("grid_insert", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
-    if not is_editable(session) then
+    if not ctx.is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -2253,9 +2265,9 @@ local function setup_edit_keymaps(bufnr, ctx)
 
   -- c: clone current row (staged INSERT with copied values, PKs cleared)
   kmap("grid_clone", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
-    if not is_editable(session) then
+    if not ctx.is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -2269,7 +2281,7 @@ local function setup_edit_keymaps(bufnr, ctx)
 
   -- a: apply all staged changes
   kmap("grid_apply", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
 
     -- Mutation preview mode: execute the pending mutation
@@ -2305,7 +2317,7 @@ local function setup_edit_keymaps(bufnr, ctx)
     end
 
     -- Normal mode: apply staged changes
-    if not is_editable(session) then
+    if not ctx.is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -2327,7 +2339,7 @@ local function setup_edit_keymaps(bufnr, ctx)
   -- Tier 1: local staging undo (uncommitted changes)
   -- Tier 2: transaction undo (reverse committed SQL)
   kmap("grid_undo", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
 
     -- Tier 0: mutation preview: cancel (close the preview)
@@ -2383,7 +2395,7 @@ local function setup_edit_keymaps(bufnr, ctx)
 
   -- U: undo all (resets to original state) or cancel mutation
   kmap("grid_undo_all", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     -- Mutation preview: cancel
     if session.pending_mutation then
@@ -2407,7 +2419,7 @@ local function setup_edit_keymaps(bufnr, ctx)
 
   -- <C-r>: redo
   kmap("grid_redo", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     if not session._redo_stack or #session._redo_stack == 0 then
       vim.notify("Nothing to redo", vim.log.levels.INFO)
@@ -2435,7 +2447,7 @@ local function setup_edit_keymaps(bufnr, ctx)
 
   -- Y: yank row as CSV
   kmap("grid_yank_row", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     local cell = M.get_cell(bufnr)
     if not cell then
@@ -2455,7 +2467,7 @@ local function setup_edit_keymaps(bufnr, ctx)
 
   -- gY: yank table as CSV
   kmap("grid_yank_table", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     local st = session.state
     local r = session._render
@@ -2475,7 +2487,7 @@ local function setup_edit_keymaps(bufnr, ctx)
 
   -- gy: yank table as Markdown pipe table
   kmap("grid_yank_md", function()
-    local session_gy = M._sessions[bufnr]
+    local session_gy = ctx.session()
     if not session_gy or not session_gy._render then return end
     local st_gy = session_gy.state
     local r_gy = session_gy._render
@@ -2496,9 +2508,9 @@ local function setup_edit_keymaps(bufnr, ctx)
 
   -- x: set cell to NULL
   kmap("grid_null", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
-    if not is_editable(session) then
+    if not ctx.is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -2528,7 +2540,7 @@ local function setup_visual_batch_keymaps(bufnr, ctx)
   -- (issue #20). Mirrors the normal-mode clamps; like them, it ignores counts.
   local function visual_nav(target_fn)
     return function()
-      local session = M._sessions[bufnr]
+      local session = ctx.session()
       if not session or not session._render then return end
       local r = session._render
       local cursor = vim.api.nvim_win_get_cursor(0)
@@ -2543,9 +2555,9 @@ local function setup_visual_batch_keymaps(bufnr, ctx)
 
   -- Visual e: batch edit (set all selected cells in column to same value)
   kvmap("grid_v_edit", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
-    if not is_editable(session) then
+    if not ctx.is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -2571,9 +2583,9 @@ local function setup_visual_batch_keymaps(bufnr, ctx)
 
   -- Visual d: toggle delete on all selected rows
   kvmap("grid_v_delete", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
-    if not is_editable(session) then
+    if not ctx.is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -2593,9 +2605,9 @@ local function setup_visual_batch_keymaps(bufnr, ctx)
 
   -- Visual x: set all selected cells to NULL
   kvmap("grid_v_null", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
-    if not is_editable(session) then
+    if not ctx.is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -2621,7 +2633,7 @@ local function setup_inspect_keymaps(bufnr, ctx)
   local kmap, vmap, kvmap, get_visual_rows, edit_cell, km = ctx.kmap, ctx.vmap, ctx.kvmap, ctx.get_visual_rows, ctx.edit_cell, ctx.km
   -- gs: preview staged SQL (or pending mutation SQL) in float
   kmap("grid_preview_sql", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
 
     -- Mutation pending: show the pending SQL
@@ -2664,7 +2676,7 @@ local function setup_inspect_keymaps(bufnr, ctx)
 
   -- gc: copy staged SQL to clipboard
   kmap("grid_copy_sql", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     local st = session.state
     if not data.has_changes(st) then
@@ -2687,7 +2699,7 @@ local function setup_inspect_keymaps(bufnr, ctx)
 
   -- gi: table info float
   kmap("grid_table_info", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     local st = session.state
     if not st.table_name then
@@ -2728,7 +2740,7 @@ local function setup_inspect_keymaps(bufnr, ctx)
 
   -- gI: full table properties float
   kmap("grid_table_props", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     local st = session.state
     if not st.table_name then
@@ -2742,7 +2754,7 @@ local function setup_inspect_keymaps(bufnr, ctx)
 
   -- gN: rename column under cursor
   kmap("grid_rename_col", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session or not session.state.table_name then
       vim.notify("Rename requires a table name", vim.log.levels.INFO)
       return
@@ -2760,7 +2772,7 @@ local function setup_inspect_keymaps(bufnr, ctx)
 
   -- ge: explain cell
   kmap("grid_explain_cell", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     local st = session.state
     local cell = M.get_cell(bufnr)
@@ -2817,7 +2829,7 @@ local function setup_inspect_keymaps(bufnr, ctx)
 
   -- <CR>: expand cell popup (suppressed on meta views; FK view navigates to referenced table)
   kmap("grid_edit_enter", function()
-    local session_cr = M._sessions[bufnr]
+    local session_cr = ctx.session()
     if not session_cr or not session_cr._render then return end
 
     -- Meta views: no editing. FK view navigates to the referenced table; others do nothing.
@@ -2899,7 +2911,7 @@ local function setup_inspect_keymaps(bufnr, ctx)
 
   -- K: row view (vertical transpose)
   kmap("grid_row_view", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     local cell = M.get_cell(bufnr)
     if not cell then
@@ -3035,7 +3047,7 @@ local function setup_inspect_keymaps(bufnr, ctx)
   vmap("K", function()
     local row_indices = get_visual_rows()
     if not row_indices or #row_indices == 0 then return end
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     local st = session.state
 
@@ -3099,7 +3111,7 @@ local function setup_inspect_keymaps(bufnr, ctx)
       vim.notify("Select exactly 2 rows to compare", vim.log.levels.INFO)
       return
     end
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     local st = session.state
 
@@ -3148,8 +3160,8 @@ local function setup_nav_keymaps(bufnr, ctx)
   local kmap = ctx.kmap
   -- Shared helper: navigate to column by visible index offset.
   -- Works on data rows, header row, and type annotation row.
-  local function nav_col(bufnr_l, offset, use_finish)
-    local session_n = M._sessions[bufnr_l]
+  local function nav_col(offset, use_finish)
+    local session_n = ctx.session()
     if not session_n or not session_n._render then
       vim.notify("nav_col: no session or render", vim.log.levels.WARN)
       return
@@ -3199,26 +3211,26 @@ local function setup_nav_keymaps(bufnr, ctx)
     if use_finish then
       -- Land on the start of the cell's last character, not bp.finish, which can
       -- point mid-glyph (… / ·NULL·) where the cursor cannot rest.
-      local line = vim.api.nvim_buf_get_lines(bufnr_l, cursor[1] - 1, cursor[1], false)[1] or ""
+      local line = vim.api.nvim_buf_get_lines(bufnr, cursor[1] - 1, cursor[1], false)[1] or ""
       target_byte = M._cell_end_byte(line, bp.finish)
     end
     vim.api.nvim_win_set_cursor(win, { cursor[1], target_byte })
     -- Reveal the target column's right edge when it runs off-screen (wide columns).
-    reveal_col_edge(win, bufnr_l, cursor[1], bp)
+    reveal_col_edge(win, bufnr, cursor[1], bp)
   end
 
   -- Tab: next column
-  kmap("grid_col_tab", function() nav_col(bufnr, 1) end, "Next column")
+  kmap("grid_col_tab", function() nav_col(1) end, "Next column")
   -- S-Tab: previous column
-  kmap("grid_col_tab_back", function() nav_col(bufnr, -1) end, "Previous column")
+  kmap("grid_col_tab_back", function() nav_col(-1) end, "Previous column")
   -- w: next column (alias for Tab)
-  kmap("grid_col_next", function() nav_col(bufnr, 1) end, "Next column")
+  kmap("grid_col_next", function() nav_col(1) end, "Next column")
   -- b: previous column (alias for S-Tab)
-  kmap("grid_col_prev", function() nav_col(bufnr, -1) end, "Previous column")
+  kmap("grid_col_prev", function() nav_col(-1) end, "Previous column")
 
   -- gg: first data row, same column
   kmap("grid_row_first", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session or not session._render then return end
     local r = session._render
     local ds = r.data_start or 4
@@ -3228,7 +3240,7 @@ local function setup_nav_keymaps(bufnr, ctx)
 
   -- G: last data row, same column
   kmap("grid_row_last", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session or not session._render then return end
     local r = session._render
     local ds = r.data_start or 4
@@ -3239,7 +3251,7 @@ local function setup_nav_keymaps(bufnr, ctx)
 
   -- k: move up, skipping separator and type rows (jump from first data row → header/type row)
   kmap("grid_row_up", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session or not session._render then
       vim.api.nvim_feedkeys("k", "n", false)
       return
@@ -3268,7 +3280,7 @@ local function setup_nav_keymaps(bufnr, ctx)
 
   -- j: move down, skipping separator and type rows (jump from header/type row → first data row)
   kmap("grid_row_down", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session or not session._render then
       vim.api.nvim_feedkeys("j", "n", false)
       return
@@ -3307,7 +3319,7 @@ local function setup_nav_keymaps(bufnr, ctx)
 
   -- ^: first column of current row (works on header, type, and data rows)
   kmap("grid_col_first2", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session or not session._render then return end
     local r = session._render
     local cols = r.visible_columns or session.state.columns
@@ -3321,7 +3333,7 @@ local function setup_nav_keymaps(bufnr, ctx)
 
   -- 0: first column (same as ^)
   kmap("grid_col_first", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session or not session._render then return end
     local r = session._render
     local cols = r.visible_columns or session.state.columns
@@ -3335,7 +3347,7 @@ local function setup_nav_keymaps(bufnr, ctx)
 
   -- -: hide column under cursor
   kmap("grid_hide_col", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     local cell = M.get_cell(bufnr)
     if not cell then
@@ -3359,7 +3371,7 @@ local function setup_nav_keymaps(bufnr, ctx)
 
   -- g-: restore all hidden columns
   kmap("grid_restore_cols", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     if not session.hidden_columns or not next(session.hidden_columns) then
       vim.notify("No hidden columns", vim.log.levels.INFO)
@@ -3374,7 +3386,7 @@ local function setup_nav_keymaps(bufnr, ctx)
 
   -- =: minimize column to name width, or reset to default if already minimized
   kmap("grid_col_width", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     -- Resolve column via data row or row-type-aware byte positions (same logic as nav_col)
     local cell = M.get_cell(bufnr)
@@ -3440,7 +3452,7 @@ local function setup_nav_keymaps(bufnr, ctx)
 
   -- gH: multi-select column visibility picker
   kmap("grid_col_vis", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     if not session.hidden_columns then session.hidden_columns = {} end
 
@@ -3532,7 +3544,7 @@ local function setup_nav_keymaps(bufnr, ctx)
 
   -- $: last column of current row (works on header, type, and data rows)
   kmap("grid_col_last", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session or not session._render then return end
     local r = session._render
     local cols = r.visible_columns or session.state.columns
@@ -3548,7 +3560,7 @@ local function setup_nav_keymaps(bufnr, ctx)
 
   -- e: vim-like end-of-cell. First moves to end of current cell; when already there, advances.
   kmap("grid_col_end", function()
-    local session_e = M._sessions[bufnr]
+    local session_e = ctx.session()
     if not session_e or not session_e._render then return end
     local r = session_e._render
     local cols = r.visible_columns or session_e.state.columns
@@ -3571,7 +3583,7 @@ local function setup_nav_keymaps(bufnr, ctx)
     end
     local current_col = cols[current_idx]
     local bp = ref_bp[current_col]
-    if not bp then nav_col(bufnr, 1, true); return end
+    if not bp then nav_col(1, true); return end
     -- Use the start byte of the cell's last character: bp.finish can point
     -- mid-glyph (… / ·NULL·) where the normal-mode cursor can never rest, which
     -- would wedge `e` in place. When already at that end, advance to next column.
@@ -3580,7 +3592,7 @@ local function setup_nav_keymaps(bufnr, ctx)
     if cursor[2] < end_col then
       vim.api.nvim_win_set_cursor(0, { cursor[1], end_col })
     else
-      nav_col(bufnr, 1, true)
+      nav_col(1, true)
     end
   end, "End of current cell (then next)")
 end
@@ -3591,7 +3603,7 @@ local function setup_misc_keymaps(bufnr, ctx)
   local kmap, kvmap, get_visual_rows = ctx.kmap, ctx.kvmap, ctx.get_visual_rows
   -- gq: load saved query (open query pad + picker)
   kmap("load_saved", function()
-    local session_q = M._sessions[bufnr]
+    local session_q = ctx.session()
     local s_url = session_q and session_q.url
     local query_pad = require("dadbod-grip.query_pad")
     local saved = require("dadbod-grip.saved")
@@ -3612,7 +3624,7 @@ local function setup_misc_keymaps(bufnr, ctx)
 
   -- {: previous modified/staged row
   kmap("grid_prev_mod", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session or not session._render then return end
     local r = session._render
     local cursor = vim.api.nvim_win_get_cursor(0)
@@ -3634,7 +3646,7 @@ local function setup_misc_keymaps(bufnr, ctx)
 
   -- }: next modified/staged row
   kmap("grid_next_mod", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session or not session._render then return end
     local r = session._render
     local cursor = vim.api.nvim_win_get_cursor(0)
@@ -3655,9 +3667,9 @@ local function setup_misc_keymaps(bufnr, ctx)
 
   -- p: paste clipboard value into cell
   kmap("grid_paste", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
-    if not is_editable(session) then
+    if not ctx.is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -3680,9 +3692,9 @@ local function setup_misc_keymaps(bufnr, ctx)
 
   -- P: paste multi-line clipboard into consecutive rows (spread down)
   kmap("grid_paste_rows", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
-    if not is_editable(session) then
+    if not ctx.is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -3735,7 +3747,7 @@ local function setup_misc_keymaps(bufnr, ctx)
 
   -- Visual y: yank selected cells in column (newline-separated)
   kvmap("grid_v_yank", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     local cell = M.get_cell(bufnr)
     if not cell then return end
@@ -3754,7 +3766,7 @@ local function setup_misc_keymaps(bufnr, ctx)
 
   -- gl: toggle live SQL preview float
   kmap("grid_live_sql", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
 
     -- Mutation preview mode: use gs instead
@@ -3779,7 +3791,7 @@ local function setup_misc_keymaps(bufnr, ctx)
 
   -- T: toggle column types overlay
   kmap("grid_type_row", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     if not session.state.table_name then
       vim.notify("Column types requires a table name", vim.log.levels.INFO)
@@ -3805,7 +3817,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
   local kmap = ctx.kmap
   -- Helper: warn if pending changes, return true if user wants to proceed
   local function confirm_discard_changes(action_name)
-    local session_c = M._sessions[bufnr]
+    local session_c = ctx.session()
     if not session_c then return true end
     if not data.has_changes(session_c.state) then return true end
     local staged = data.count_staged(session_c.state)
@@ -3818,7 +3830,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- s: sort by column (replaces existing sort)
   kmap("grid_sort", function()
-    local session_s = M._sessions[bufnr]
+    local session_s = ctx.session()
     if not session_s or not session_s.query_spec then return end
     local cell = M.get_cell(bufnr)
     if not cell then
@@ -3832,7 +3844,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- S: add/toggle secondary sort (stacked)
   kmap("grid_sort_stack", function()
-    local session_s = M._sessions[bufnr]
+    local session_s = ctx.session()
     if not session_s or not session_s.query_spec then return end
     local cell = M.get_cell(bufnr)
     if not cell then
@@ -3846,7 +3858,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- f: quick filter by cell value
   kmap("grid_filter_cell", function()
-    local session_f = M._sessions[bufnr]
+    local session_f = ctx.session()
     if not session_f or not session_f.query_spec then return end
     local cell = M.get_cell(bufnr)
     if not cell then
@@ -3862,7 +3874,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- <C-f>: freeform WHERE clause filter
   kmap("grid_filter_where", function()
-    local session_f = M._sessions[bufnr]
+    local session_f = ctx.session()
     if not session_f or not session_f.query_spec then return end
     if not confirm_discard_changes("Filter") then return end
     local input = ui.input({ prompt = "WHERE clause (e.g. status='x' AND amount>0): " })
@@ -3873,7 +3885,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- F: clear all filters
   kmap("grid_filter_clear", function()
-    local session_f = M._sessions[bufnr]
+    local session_f = ctx.session()
     if not session_f or not session_f.query_spec then return end
     if not qmod.has_filters(session_f.query_spec) then
       vim.notify("No active filters", vim.log.levels.INFO)
@@ -3887,7 +3899,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- gn: filter column IS NULL
   kmap("grid_filter_null", function()
-    local session_n = M._sessions[bufnr]
+    local session_n = ctx.session()
     if not session_n or not session_n.query_spec then return end
     local col_name
     local cell = M.get_cell(bufnr)
@@ -3915,7 +3927,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- gF: interactive filter builder (=, !=, >, <, LIKE, IN, BETWEEN, NULL, NOT NULL)
   kmap("grid_filter_build", function()
-    local session_gF = M._sessions[bufnr]
+    local session_gF = ctx.session()
     if not session_gF or not session_gF.query_spec then return end
 
     -- Resolve column name from cursor (data row or header/type row)
@@ -3983,7 +3995,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- gp: load a saved filter preset
   kmap("grid_preset_load", function()
-    local session_fp = M._sessions[bufnr]
+    local session_fp = ctx.session()
     if not session_fp or not session_fp.query_spec then return end
     local tbl = session_fp.state.table_name
     if not tbl then
@@ -4001,7 +4013,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- gP: save current filter as preset
   kmap("grid_preset_save", function()
-    local session_fp = M._sessions[bufnr]
+    local session_fp = ctx.session()
     if not session_fp or not session_fp.query_spec then return end
     local tbl = session_fp.state.table_name
     if not tbl then
@@ -4026,7 +4038,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- ]p: next page
   kmap("grid_next_page2", function()
-    local session_p = M._sessions[bufnr]
+    local session_p = ctx.session()
     if not session_p or not session_p.query_spec then return end
     -- Check if we're on the last page
     if session_p.total_rows then
@@ -4043,7 +4055,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- [p: previous page
   kmap("grid_prev_page2", function()
-    local session_p = M._sessions[bufnr]
+    local session_p = ctx.session()
     if not session_p or not session_p.query_spec then return end
     if session_p.query_spec.page <= 1 then
       vim.notify("Already on first page", vim.log.levels.INFO)
@@ -4056,7 +4068,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- ]P: jump to last page
   kmap("grid_last_page", function()
-    local session_p = M._sessions[bufnr]
+    local session_p = ctx.session()
     if not session_p or not session_p.query_spec then return end
     if not session_p.total_rows then
       vim.notify("Total rows unknown", vim.log.levels.INFO)
@@ -4074,7 +4086,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- [P: jump to first page
   kmap("grid_first_page", function()
-    local session_p = M._sessions[bufnr]
+    local session_p = ctx.session()
     if not session_p or not session_p.query_spec then return end
     if session_p.query_spec.page <= 1 then
       vim.notify("Already on first page", vim.log.levels.INFO)
@@ -4087,7 +4099,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- H/L: ergonomic page navigation (prev/next): single-key aliases for [p/]p
   kmap("grid_prev_page", function()
-    local session_p = M._sessions[bufnr]
+    local session_p = ctx.session()
     if not session_p or not session_p.query_spec then return end
     if session_p.query_spec.page <= 1 then
       vim.notify("Already on first page", vim.log.levels.INFO)
@@ -4099,7 +4111,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
   end, "Previous page")
 
   kmap("grid_next_page", function()
-    local session_p = M._sessions[bufnr]
+    local session_p = ctx.session()
     if not session_p or not session_p.query_spec then return end
     if session_p.total_rows then
       local total_pages = math.max(1, math.ceil(session_p.total_rows / session_p.query_spec.page_size))
@@ -4115,7 +4127,7 @@ local function setup_sort_filter_keymaps(bufnr, ctx)
 
   -- X: reset all query modifiers (sorts, filters, page)
   kmap("grid_reset_view", function()
-    local session_x = M._sessions[bufnr]
+    local session_x = ctx.session()
     if not session_x or not session_x.query_spec then return end
     local spec = session_x.query_spec
     if #spec.sorts == 0 and #spec.filters == 0 and spec.page == 1 then
@@ -4134,7 +4146,7 @@ local function setup_fk_keymaps(bufnr, ctx)
   local kmap = ctx.kmap
   -- gf: navigate to FK referenced row
   kmap("grid_fk_follow", function()
-    local session_fk = M._sessions[bufnr]
+    local session_fk = ctx.session()
     if not session_fk or not session_fk.state.table_name then
       vim.notify("FK navigation requires a table name", vim.log.levels.INFO)
       return
@@ -4227,7 +4239,7 @@ local function setup_fk_keymaps(bufnr, ctx)
 
   -- <C-o>: go back in FK navigation stack
   kmap("grid_fk_back", function()
-    local session_nav = M._sessions[bufnr]
+    local session_nav = ctx.session()
     if not session_nav then return end
     if not session_nav.nav_stack or #session_nav.nav_stack == 0 then
       vim.notify("No FK navigation history", vim.log.levels.INFO)
@@ -4254,7 +4266,7 @@ local function setup_aggregate_keymaps(bufnr, ctx)
   -- '< / '>: those marks hold the *previous* visual selection, so ga silently
   -- aggregated a stale range once the user had selected anything at all.
   local function aggregate_column(row_indices)
-    local session_a = M._sessions[bufnr]
+    local session_a = ctx.session()
     if not session_a or not session_a._render then return end
     local r = session_a._render
     local st_a = session_a.state
@@ -4326,7 +4338,7 @@ local function setup_aggregate_keymaps(bufnr, ctx)
 
   -- gS: column statistics
   kmap("grid_col_stats", function()
-    local session_cs = M._sessions[bufnr]
+    local session_cs = ctx.session()
     if not session_cs or not session_cs.state.table_name then
       vim.notify("Column stats requires a table name", vim.log.levels.INFO)
       return
@@ -4387,7 +4399,7 @@ local function setup_aggregate_keymaps(bufnr, ctx)
 
   -- gR: table profile report
   kmap("grid_profile", function()
-    local session_pr = M._sessions[bufnr]
+    local session_pr = ctx.session()
     if not session_pr or not session_pr.state.table_name then
       vim.notify("Profile requires a table name", vim.log.levels.INFO)
       return
@@ -4398,7 +4410,7 @@ local function setup_aggregate_keymaps(bufnr, ctx)
 
   -- gE: export in multiple formats
   kmap("grid_export_clip", function()
-    local session_e = M._sessions[bufnr]
+    local session_e = ctx.session()
     if not session_e or not session_e._render then return end
     local st_e = session_e.state
     local r_e = session_e._render
@@ -4437,7 +4449,7 @@ local function setup_aggregate_keymaps(bufnr, ctx)
 
   -- gQ: explain current query (shortcut for :GripExplain)
   kmap("grid_explain", function()
-    local session_x = M._sessions[bufnr]
+    local session_x = ctx.session()
     if not session_x then return end
     local explain_sql
     if session_x.query_spec then
@@ -4482,7 +4494,7 @@ local function setup_tool_keymaps(bufnr, ctx)
   local map, kmap = ctx.map, ctx.kmap
   -- gD: diff against another table (picker with schema-overlap preview)
   kmap("grid_diff", function()
-    local session_d = M._sessions[bufnr]
+    local session_d = ctx.session()
     if not session_d then return end
     local st = session_d.state
     if not st.table_name then
@@ -4553,7 +4565,7 @@ local function setup_tool_keymaps(bufnr, ctx)
 
   -- gV: show CREATE TABLE DDL in floating window
   kmap("grid_show_ddl", function()
-    local session_v = M._sessions[bufnr]
+    local session_v = ctx.session()
     if not session_v then return end
     local tbl = session_v.state.table_name
     if not tbl then
@@ -4630,7 +4642,7 @@ local function setup_tool_keymaps(bufnr, ctx)
   -- gb: schema browser sidebar (toggle/focus)
   kmap("schema_browser", function()
     local schema = require("dadbod-grip.schema")
-    local s = M._sessions[bufnr]
+    local s = ctx.session()
     -- For file-as-table sessions, pass the file path so sidebar shows column schema
     local s_url = s and (s.file_path or s.url)
     schema.toggle(s_url)
@@ -4639,7 +4651,8 @@ local function setup_tool_keymaps(bufnr, ctx)
   -- go / gT / gt: table picker
   local function _pick_table()
     local picker = require("dadbod-grip.picker")
-    local s_url = M._sessions[bufnr] and M._sessions[bufnr].url
+    local session = ctx.session()
+    local s_url = session and session.url
     picker.pick_table(s_url, function(name)
       local grip = require("dadbod-grip")
       grip.open(name, s_url)
@@ -4658,7 +4671,7 @@ local function setup_tool_keymaps(bufnr, ctx)
 
   -- gW: toggle watch mode (auto-refresh on timer)
   kmap("grid_watch", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     if session.watch_ms then
       _stop_watch(bufnr)
@@ -4674,7 +4687,7 @@ local function setup_tool_keymaps(bufnr, ctx)
 
   -- g!: toggle write mode (file write-back on apply)
   kmap("grid_write_mode", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
 
     local file_path = session.file_path
@@ -4716,7 +4729,7 @@ local function setup_tool_keymaps(bufnr, ctx)
 
   -- gO: swap read-only query result to editable table
   kmap("grid_open_edit", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     if not session.state.readonly then
       vim.notify("Already editable: i=edit  o=insert  d=delete", vim.log.levels.INFO)
@@ -4785,7 +4798,7 @@ local function setup_tool_keymaps(bufnr, ctx)
   -- gh: query history browser
   kmap("query_history", function()
     local hist = require("dadbod-grip.history")
-    local session_h = M._sessions[bufnr]
+    local session_h = ctx.session()
     local s_url = session_h and session_h.url
     hist.pick(function(sql_content)
       local query_pad = require("dadbod-grip.query_pad")
@@ -4800,7 +4813,7 @@ local function setup_tool_keymaps(bufnr, ctx)
       vim.notify("AI is disabled. Enable it in setup({ ai = { ... } })", vim.log.levels.INFO)
       return
     end
-    local session_ai = M._sessions[bufnr]
+    local session_ai = ctx.session()
     local s_url = session_ai and session_ai.state.url
     if not s_url then
       s_url = require("dadbod-grip.db").get_url()
@@ -4825,7 +4838,7 @@ local function setup_tool_keymaps(bufnr, ctx)
 
   -- gL: pin / unpin this result (exclude from auto-reuse by query pad)
   kmap("grid_pin", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     if not session then return end
     if not session.pinned then
       -- Check pinned_max cap before pinning
@@ -4908,7 +4921,7 @@ local function setup_tab_view_keymaps(bufnr, ctx)
   local map, kmap, km = ctx.map, ctx.kmap, ctx.km
   -- 1: schema sidebar (already in grid = always primary: open/focus sidebar)
   kmap("tab_1", function()
-    local _s = M._sessions[bufnr]
+    local _s = ctx.session()
     M.close_all_floats(_s)
     local s_url = _s and _s.url
     require("dadbod-grip.schema").toggle(s_url)
@@ -4916,7 +4929,7 @@ local function setup_tab_view_keymaps(bufnr, ctx)
 
   -- 2: open query pad (pre-filled with current query)
   kmap("tab_2", function()
-    local session_2 = M._sessions[bufnr]
+    local session_2 = ctx.session()
     M.close_all_floats(session_2)
     local s_url = session_2 and session_2.url
     local initial_sql
@@ -4930,7 +4943,7 @@ local function setup_tab_view_keymaps(bufnr, ctx)
 
   -- 3: grid/records (already in non-records view = return to records; already on records = table picker)
   kmap("tab_3", function()
-    local session_3 = M._sessions[bufnr]
+    local session_3 = ctx.session()
     M.close_all_floats(session_3)
     local cv = session_3 and session_3.current_view
     if cv and cv ~= "records" then
@@ -4951,7 +4964,7 @@ local function setup_tab_view_keymaps(bufnr, ctx)
     if view_name and tab_key then
       if view_name == "er_diagram" then
         map(tab_key, function()
-          local session = M._sessions[bufnr]
+          local session = ctx.session()
           M.close_all_floats(session)
           local s_url = session and session.url
           if not s_url then s_url = require("dadbod-grip.db").get_url() end
@@ -4960,7 +4973,7 @@ local function setup_tab_view_keymaps(bufnr, ctx)
         end, "ER diagram (key 4)")
       else
         map(tab_key, function()
-          M.close_all_floats(M._sessions[bufnr])
+          M.close_all_floats(ctx.session())
           M.switch_view(bufnr, view_name)
         end, "View: " .. (VIEW_LABELS[view_name] or view_name))
       end
@@ -4969,7 +4982,7 @@ local function setup_tab_view_keymaps(bufnr, ctx)
 
   -- gG: ER diagram float
   kmap("er_diagram", function()
-    local session = M._sessions[bufnr]
+    local session = ctx.session()
     local s_url = session and session.url
     if not s_url then s_url = require("dadbod-grip.db").get_url() end
     if not s_url then
@@ -4982,8 +4995,7 @@ local function setup_tab_view_keymaps(bufnr, ctx)
 
   -- ?: help popup
   kmap("help", function()
-    local session = M._sessions[bufnr]
-    M.show_help({ readonly = not is_editable(session) })
+    M.show_help({ readonly = not ctx.is_editable() })
   end, "Show help")
 
   -- <C-p>: command palette (discover all actions for this surface)
@@ -4994,12 +5006,12 @@ end
 
 --- Highlight the column under the cursor, header row included. Keyed on the
 --- _render table so a redraw invalidates the cache by itself.
-local function setup_column_highlight(bufnr)
+local function setup_column_highlight(bufnr, ctx)
   vim.api.nvim_create_autocmd("CursorMoved", {
     group  = _ag,
     buffer = bufnr,
     callback = function()
-      local session = M._sessions[bufnr]
+      local session = ctx.session()
       if not session or not session._render then return end
       local r = session._render
       local vis_cols = r.visible_columns or (session.state and session.state.columns) or {}
@@ -5065,7 +5077,7 @@ function M._setup_keymaps(bufnr)
   setup_aggregate_keymaps(bufnr, ctx)
   setup_tool_keymaps(bufnr, ctx)
   setup_tab_view_keymaps(bufnr, ctx)
-  setup_column_highlight(bufnr)
+  setup_column_highlight(bufnr, ctx)
 end
 
 --- Open the full help popup. Called from grid, query pad, and schema sidebar.
