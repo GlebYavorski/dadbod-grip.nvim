@@ -703,6 +703,52 @@ do
   db.get_schema_batch_async = orig_batch_async
 end
 
+-- ── alias cache: keyed by (bufnr, changedtick) ────────────────────────────────
+-- extract_aliases used to run on every keystroke via table.concat(all_lines).
+-- M._get_cached_aliases must only re-run it when the buffer's changedtick moves.
+
+do
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "SELECT * FROM employees e" })
+
+  local call_count = 0
+  local orig_extract = completion.extract_aliases
+  completion.extract_aliases = function(sql)
+    call_count = call_count + 1
+    return orig_extract(sql)
+  end
+
+  completion._alias_cache[bufnr] = nil  -- start from a clean slate for this bufnr
+
+  local a1 = completion._get_cached_aliases(bufnr)
+  local a2 = completion._get_cached_aliases(bufnr)
+  eq(call_count, 1, "alias cache: unchanged buffer does not re-parse on second call")
+  eq(a1["e"], "employees", "alias cache: first call parses the alias")
+  eq(a2["e"], "employees", "alias cache: cached call returns the same alias")
+
+  vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, { "JOIN departments d ON d.id = e.dept_id" })
+  local a3 = completion._get_cached_aliases(bufnr)
+  eq(call_count, 2, "alias cache: buffer edit bumps changedtick and forces a re-parse")
+  eq(a3["e"], "employees", "alias cache: re-parse keeps the earlier alias")
+  eq(a3["d"], "departments", "alias cache: re-parse picks up the new alias")
+
+  completion.extract_aliases = orig_extract
+  vim.api.nvim_buf_delete(bufnr, { force = true })
+end
+
+-- ── alias cache: cleared on buffer wipeout ────────────────────────────────────
+
+do
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "SELECT * FROM employees e" })
+
+  completion._get_cached_aliases(bufnr)
+  not_nil(completion._alias_cache[bufnr], "alias cache: entry present before wipeout")
+
+  vim.api.nvim_buf_delete(bufnr, { force = true })
+  eq(completion._alias_cache[bufnr], nil, "alias cache: entry cleared after BufWipeout/BufDelete")
+end
+
 -- ── summary ───────────────────────────────────────────────────────────────────
 print(string.format("\ncompletion_spec: %d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

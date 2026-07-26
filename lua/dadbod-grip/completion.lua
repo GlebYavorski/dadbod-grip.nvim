@@ -66,6 +66,11 @@ end
 
 --- Pre-warm the schema cache asynchronously so columns are ready before the first keypress.
 --- Called after connection switch and after GripAttach. No-op if adapter lacks async batch.
+--- LIMITATION: today only the DuckDB adapter implements get_schema_batch_async (see
+--- adapters/duckdb.lua); postgresql/mysql/sqlite/sqlserver only have the synchronous
+--- get_schema_batch. For those, this is a no-op and the first completion request after
+--- a cold cache still falls through to M.get_schema's blocking CLI spawn mid-keystroke.
+--- Adding async warming for the other adapters is a separate feature, not covered here.
 function M.warm_schema(url)
   local db = require("dadbod-grip.db")
   if not db.get_schema_batch_async then return end
@@ -135,6 +140,45 @@ function M.extract_aliases(sql)
 
   return aliases
 end
+
+-- ── Alias cache ────────────────────────────────────────────────────────────────
+-- extract_aliases concatenates the whole buffer and runs several gmatch passes;
+-- doing that on every keystroke (omnifunc, TextChangedI, cmp source all called it
+-- unconditionally) was the actual perf cost, not the schema lookup. Cache by
+-- (bufnr, changedtick): cursor-only motions don't bump changedtick, and keying by
+-- bufnr too keeps two different buffers from colliding on the same tick value.
+
+--- M._alias_cache[bufnr] = { tick = changedtick, aliases = {...} }
+--- One entry per buffer (not a history of ticks) is enough: only the latest
+--- buffer content is ever queried.
+M._alias_cache = {}
+
+--- Return the alias map for `bufnr`, re-parsing only when its changedtick
+--- moved since the last call. Exported (not local) so all three call sites
+--- (omnifunc, TextChangedI, cmp source) share one cache.
+function M._get_cached_aliases(bufnr)
+  local tick = vim.api.nvim_buf_get_changedtick(bufnr)
+  local cached = M._alias_cache[bufnr]
+  if cached and cached.tick == tick then
+    return cached.aliases
+  end
+
+  local all_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local aliases = M.extract_aliases(table.concat(all_lines, "\n"))
+  M._alias_cache[bufnr] = { tick = tick, aliases = aliases }
+  return aliases
+end
+
+-- Drop the cache entry when its buffer goes away so a stale/huge alias map
+-- can't outlive the buffer it was parsed from. Not scoped to a specific
+-- bufnr (unlike the per-buffer autocmds in setup_auto_complete below) since
+-- omnifunc and the cmp source can populate entries for any buffer with vim.b.db set.
+vim.api.nvim_create_autocmd({ "BufWipeout", "BufDelete" }, {
+  group = _ag,
+  callback = function(args)
+    M._alias_cache[args.buf] = nil
+  end,
+})
 
 -- ── Context parsing ────────────────────────────────────────────────────────────
 
@@ -435,8 +479,8 @@ function M.omnifunc(findstart, base)
 
     -- Extract aliases from the full buffer so dotted completion resolves
     -- e.g. "SELECT e." where "FROM employees e" appears elsewhere in the query.
-    local all_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-    local aliases   = M.extract_aliases(table.concat(all_lines, "\n"))
+    -- Cached by changedtick: see M._get_cached_aliases.
+    local aliases = M._get_cached_aliases(vim.api.nvim_get_current_buf())
 
     -- For dotted completion, we need the full context including qualifier.
     -- The `base` from Vim may strip the qualifier, so we use `before` directly.
@@ -492,8 +536,7 @@ function M.setup_auto_complete(bufnr, url_fn)
         local in_dotted_ctx = before:match("[%w_]+%.[%w_]*$") ~= nil
         if word == "" and not in_dotted_ctx then return end
 
-        local all_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-        local aliases   = M.extract_aliases(table.concat(all_lines, "\n"))
+        local aliases = M._get_cached_aliases(bufnr)
 
         local raw = M.complete(before, url, aliases)
         if #raw == 0 then return end
@@ -554,8 +597,7 @@ function M.register_cmp_source()
     local before = params.context.cursor_before_line
     local bufnr  = params.context.bufnr
 
-    local all_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    local aliases   = M.extract_aliases(table.concat(all_lines, "\n"))
+    local aliases = M._get_cached_aliases(bufnr)
 
     local raw = M.complete(before, url, aliases)
     if #raw == 0 then callback(nil) return end
