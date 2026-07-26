@@ -192,6 +192,19 @@ M.defaults = {
 
 }
 
+--- Which view each tab slot 4-9 selects. Single source of truth for every
+--- surface (grid, query pad, schema sidebar, <leader>D window keymaps):
+--- slot 4 is the ER diagram float, 5-9 are table-depth views of the grid.
+--- Slots 1-3 are surface-specific navigation and have no shared mapping.
+M.TAB_VIEWS = {
+  [4] = "er_diagram",
+  [5] = "stats",
+  [6] = "columns",
+  [7] = "fk",
+  [8] = "indexes",
+  [9] = "constraints",
+}
+
 --- Return the configured key for an action, or false to disable.
 --- Reads from the user overrides stored by setup({ keymaps = {...} }).
 ---@param action string  key from M.defaults

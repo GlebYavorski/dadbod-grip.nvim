@@ -98,14 +98,7 @@ end
 -- ── tab view system ─────────────────────────────────────────────────────────
 -- 1=sidebar/connections  2=query-pad/history  3=grid/table-picker
 -- 4=ER diagram  5=stats  6=columns  7=fk  8=indexes  9=constraints
-local VIEW_KEYS = {
-  [4] = "er_diagram",
-  [5] = "stats",
-  [6] = "columns",
-  [7] = "fk",
-  [8] = "indexes",
-  [9] = "constraints",
-}
+local VIEW_KEYS = require("dadbod-grip.keymaps").TAB_VIEWS
 local VIEW_LABELS = {
   records     = "Rec",
   columns     = "Col",

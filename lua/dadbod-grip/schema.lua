@@ -960,10 +960,8 @@ local function setup_keymaps(url)
   end)
 
   -- tab_4-9: ER diagram float or open table in a specific view facet
-  local TAB_VIEWS = { [4]="er_diagram", [5]="stats", [6]="columns",
-                      [7]="fk", [8]="indexes", [9]="constraints" }
   for n = 4, 9 do
-    local view_name = TAB_VIEWS[n]
+    local view_name = km.TAB_VIEWS[n]
     local tab_key = km.get("tab_" .. n)
     if tab_key then
       vim.keymap.set("n", tab_key, function()

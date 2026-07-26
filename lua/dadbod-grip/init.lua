@@ -1126,18 +1126,12 @@ function M.open(arg, url, opts)
     end,
   })
 
-  -- Switch to a specific view if requested via opts.view (number 2-9 or name string)
-  if opts and opts.view then
-    local VIEW_KEYS = { [2]="records", [3]="history", [4]="stats", [5]="explain",
-                        [6]="columns", [7]="fk", [8]="indexes", [9]="constraints" }
-    local view_name = type(opts.view) == "number" and VIEW_KEYS[opts.view]
-                   or type(opts.view) == "string" and opts.view
-                   or nil
-    if view_name then
-      vim.schedule(function()
-        view.switch_view(bufnr, view_name)
-      end)
-    end
+  -- Switch to a specific view if requested via opts.view (view name string)
+  if opts and type(opts.view) == "string" then
+    local view_name = opts.view
+    vim.schedule(function()
+      view.switch_view(bufnr, view_name)
+    end)
   end
 end
 
@@ -1471,10 +1465,11 @@ function M.open_welcome()
     if not conn then do_connect(); return end
     require("dadbod-grip.er_diagram").toggle(conn)
   end, "ER diagram")
-  for _, n in ipairs({ "5", "6", "7", "8", "9" }) do
-    local view_map = { ["5"]="stats", ["6"]="columns", ["7"]="fk", ["8"]="indexes", ["9"]="constraints" }
-    local vname = view_map[n]
-    wmap(n, function()
+  -- 5-9: pick a table and open it straight into that view. Slot 4 (ER diagram)
+  -- is a float, not a grid view, so it is wired separately above.
+  for n = 5, 9 do
+    local vname = require("dadbod-grip.keymaps").TAB_VIEWS[n]
+    wmap(tostring(n), function()
       local conn = cur_conn()
       if not conn then do_connect(); return end
       require("dadbod-grip.picker").pick_table(conn, function(t) M.open(t, conn, { view = vname }) end)

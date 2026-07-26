@@ -519,8 +519,6 @@ local function setup_keymaps(bufnr, url)
 
   -- ── tab view keymaps (1-9) ───────────────────────────────────────────────
   -- 1-3: surface navigation  4=ER diagram float  5-9: table-depth views
-  local VIEW_MAP = { [4]="er_diagram", [5]="stats", [6]="columns",
-                     [7]="fk", [8]="indexes", [9]="constraints" }
 
   -- tab_1: schema sidebar
   kmap("tab_1", "n", function()
@@ -554,7 +552,7 @@ local function setup_keymaps(bufnr, url)
 
   -- tab_4-9: ER diagram float or jump to grid + switch to that view
   for n = 4, 9 do
-    local view_name = VIEW_MAP[n]
+    local view_name = km.TAB_VIEWS[n]
     local tab_key = km.get("tab_" .. n)
     if tab_key then
       vim.keymap.set("n", tab_key, function()
