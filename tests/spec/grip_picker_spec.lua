@@ -496,6 +496,94 @@ test("filter: cache does not go stale across query A -> B -> A", function()
   close_all_floats()
 end)
 
+test("filter: non-closing action invalidates cache when it changes what display() shows", function()
+  -- Regression test mirroring connections.lua's M:mask action: a custom
+  -- action with no close_on_select mutates state captured by the caller's
+  -- display() closure, but touches neither `filter` nor `items`. The cache
+  -- must not serve a filtered list computed under the old display() output.
+  local show_pass = {}
+  local url = "postgres://user:secret@host/db"
+  local masked = "postgres://***@host/db"
+
+  local buf = open_picker_capture_buf({
+    title = "Mask",
+    items = { { url = url } },
+    display = function(item)
+      return show_pass[item.url] and item.url or masked
+    end,
+    actions = {
+      {
+        key   = "M",
+        label = "M:mask",
+        fn    = function(item) show_pass[item.url] = not show_pass[item.url] end,
+      },
+    },
+  })
+  assert(buf, "buf should exist")
+
+  local function shows(needle)
+    for _, l in ipairs(buf_lines(buf)) do
+      if l:find(needle, 1, true) then return true end
+    end
+    return false
+  end
+
+  -- The filter indicator line ("  / secret") itself contains the word
+  -- "secret", so check for a substring found only in the unmasked URL row.
+  local unmasked_only = "user:secret@host"
+
+  -- Reveal, then filter on a substring that only the unmasked URL contains.
+  press(buf, "M")
+  answering("<C-u>secret<CR>", function() press(buf, "/") end)
+  assert(shows(unmasked_only), "revealed item matching the filter should be visible")
+
+  -- Re-mask: display() output changes (no longer contains "secret"), but
+  -- filter/items don't. A fresh filter pass would now show (no items).
+  press(buf, "M")
+  refute(shows(unmasked_only), "item should disappear once re-masked, since it no longer matches the filter")
+  assert(shows("no items"), "picker should show (no items) once the only match is masked out")
+
+  close_all_floats()
+end)
+
+test("filter: item deletion still respects an active filter (not a stale cached list)", function()
+  -- refresh_fn (D + on_delete) reassigns `items` while a filter can already
+  -- be active. The post-delete render must re-filter the new item list, not
+  -- replay whatever was cached for the pre-delete items.
+  local buf = open_picker_capture_buf({
+    title = "Delete+Filter",
+    items = { { name = "alpha" }, { name = "abba" }, { name = "beta" } },
+    display = function(item) return item.name end,
+    on_delete = function(_, refresh_fn)
+      -- Simulate deleting "abba" from the underlying list.
+      refresh_fn({ { name = "alpha" }, { name = "beta" } })
+    end,
+  })
+  assert(buf, "buf should exist")
+
+  local function shows(needle)
+    for _, l in ipairs(buf_lines(buf)) do
+      if l:find(needle, 1, true) then return true end
+    end
+    return false
+  end
+
+  -- Filter "b" matches "abba" and "beta", not "alpha".
+  answering("<C-u>b<CR>", function() press(buf, "/") end)
+  assert(shows("abba"), "abba should match filter 'b' before deletion")
+  assert(shows("beta"), "beta should match filter 'b' before deletion")
+  refute(shows("alpha"), "alpha should not match filter 'b'")
+
+  -- D deletes "abba" (hovered, first filtered match) via on_delete/refresh_fn.
+  press(buf, "D")
+
+  refute(shows("abba"), "abba should be gone after deletion")
+  assert(shows("beta"), "beta should still match filter 'b' after deletion")
+  refute(shows("alpha"), "alpha should still be excluded by filter 'b' after deletion")
+
+  close_all_floats()
+end)
+
 -- ── close ─────────────────────────────────────────────────────────────────────
 
 test("q closes the picker window", function()

@@ -94,6 +94,15 @@ function M.open(opts)
     return result
   end
 
+  -- Force the next filtered_items() call to recompute. Needed wherever
+  -- something `display()` reads can change without `filter` or `items`
+  -- moving — e.g. a custom action (like connections.lua's M:mask) that
+  -- toggles state captured by the caller's `display` closure. `filter` is
+  -- always a string, so nil can never match it, guaranteeing a miss.
+  local function invalidate_cache()
+    _cache_filter = nil
+  end
+
   -- ── buffers ──
 
   local popup_buf = vim.api.nvim_create_buf(false, true)
@@ -404,6 +413,10 @@ function M.open(opts)
         if action.fn then vim.schedule(function() action.fn(item) end) end
       else
         if action.fn then action.fn(item) end
+        -- action.fn may have changed something display() reads (e.g. a
+        -- mask/reveal toggle) without touching `filter` or `items`, which
+        -- the cache wouldn't otherwise notice.
+        invalidate_cache()
         render()
       end
     end)
