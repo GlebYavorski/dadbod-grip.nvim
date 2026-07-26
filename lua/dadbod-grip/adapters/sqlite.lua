@@ -28,6 +28,17 @@ local function extract_path(url)
   return path
 end
 
+--- Reduce a table name to the bare name the PRAGMAs and sqlite_master expect.
+--- SQLite has no schemas, so any qualifier ("main.users", an attached-database
+--- prefix) is dropped rather than returned; that is why this is not
+--- sql_util.split_table_name, which unquotes each part and hands the schema
+--- back. Kept deliberately as-is: strip the outer double quotes off the whole
+--- name, then drop everything up to the first dot.
+local function bare_table_name(table_name)
+  local tbl = table_name:gsub('^"', ''):gsub('"$', '')
+  return tbl:match("^[^.]+%.(.+)$") or tbl
+end
+
 local function sqlite3(db_path, sql_str, timeout_ms)
   return adapters.run_cmd(
     { "sqlite3", "-init", "", "-csv", "-header", db_path, sql_str },
@@ -63,8 +74,7 @@ function M.get_primary_keys(table_name, url)
   local db_path = extract_path(url)
   if not db_path then return {}, "Invalid SQLite URL: " .. url end
 
-  local tbl = table_name:gsub('^"', ''):gsub('"$', '')
-  tbl = tbl:match("^[^.]+%.(.+)$") or tbl
+  local tbl = bare_table_name(table_name)
 
   local stdout, stderr, code = sqlite3(db_path, string.format('PRAGMA table_info("%s")', tbl:gsub('"', '""')))
   if code ~= 0 then
@@ -96,8 +106,7 @@ function M.get_column_info(table_name, url)
   local db_path = extract_path(url)
   if not db_path then return nil, "Invalid SQLite URL: " .. url end
 
-  local tbl = table_name:gsub('^"', ''):gsub('"$', '')
-  tbl = tbl:match("^[^.]+%.(.+)$") or tbl
+  local tbl = bare_table_name(table_name)
 
   local stdout, stderr, code = sqlite3(db_path, string.format('PRAGMA table_info("%s")', tbl:gsub('"', '""')))
   if code ~= 0 then
@@ -126,8 +135,7 @@ function M.get_foreign_keys(table_name, url)
   local db_path = extract_path(url)
   if not db_path then return {}, "Invalid SQLite URL: " .. url end
 
-  local tbl = table_name:gsub('^"', ''):gsub('"$', '')
-  tbl = tbl:match("^[^.]+%.(.+)$") or tbl
+  local tbl = bare_table_name(table_name)
 
   local stdout, stderr, code = sqlite3(db_path, string.format('PRAGMA foreign_key_list("%s")', tbl:gsub('"', '""')))
   if code ~= 0 then
@@ -157,8 +165,7 @@ function M.get_referencing_foreign_keys(table_name, url)
   local db_path = extract_path(url)
   if not db_path then return {}, "Invalid SQLite URL: " .. url end
 
-  local tbl = table_name:gsub('^"', ''):gsub('"$', '')
-  tbl = tbl:match("^[^.]+%.(.+)$") or tbl
+  local tbl = bare_table_name(table_name)
 
   -- PRAGMA foreign_key_list columns: id, seq, table, from, to, ...
   -- One row per FK column; (child, id) identifies a constraint.
@@ -271,8 +278,7 @@ function M.get_indexes(table_name, url)
   local db_path = extract_path(url)
   if not db_path then return {}, "Invalid SQLite URL: " .. url end
 
-  local tbl = table_name:gsub('^"', ''):gsub('"$', '')
-  tbl = tbl:match("^[^.]+%.(.+)$") or tbl
+  local tbl = bare_table_name(table_name)
 
   -- Get index list
   local stdout, stderr, code = sqlite3(db_path, string.format('PRAGMA index_list("%s")', tbl:gsub('"', '""')))
@@ -317,8 +323,7 @@ function M.get_constraints(table_name, url)
   local db_path = extract_path(url)
   if not db_path then return {}, "Invalid SQLite URL: " .. url end
 
-  local tbl = table_name:gsub('^"', ''):gsub('"$', '')
-  tbl = tbl:match("^[^.]+%.(.+)$") or tbl
+  local tbl = bare_table_name(table_name)
 
   local stdout, stderr, code = sqlite3(db_path,
     string.format("SELECT sql FROM sqlite_master WHERE type='table' AND name='%s'",
@@ -354,8 +359,7 @@ function M.get_table_stats(table_name, url)
   local db_path = extract_path(url)
   if not db_path then return nil, "Invalid SQLite URL: " .. url end
 
-  local tbl = table_name:gsub('^"', ''):gsub('"$', '')
-  tbl = tbl:match("^[^.]+%.(.+)$") or tbl
+  local tbl = bare_table_name(table_name)
 
   -- Row count (exact, SQLite doesn't have estimates)
   local stdout, _, code = sqlite3(db_path, string.format("SELECT COUNT(*) FROM \"%s\"", tbl:gsub('"', '""')))
