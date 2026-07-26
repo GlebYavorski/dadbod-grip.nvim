@@ -118,6 +118,10 @@ local function build_lines(props)
   col_widths.dtype = math.min(col_widths.dtype, 20)
   col_widths.default = math.min(col_widths.default, 20)
 
+  -- Callers always pass values already clamped to col_widths.X below, so this
+  -- never truncates in practice; unlike the old byte-length pad, it now COULD
+  -- (and at w <= 0 returns "" instead of the old s unchanged) if that invariant
+  -- is ever broken.
   local function pad(s, w) return (ui.pad_display(s, w, false)) end
   local function col_row(num, name, dtype, nullable, default)
     return "  " .. pad(num, col_widths.num) ..

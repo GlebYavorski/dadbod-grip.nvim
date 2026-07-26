@@ -121,6 +121,12 @@ test("build_lines: CJK/emoji column values keep the table aligned", function()
 end)
 
 test("build_lines: index name dot-fill alignment uses display width", function()
+  -- Old code sized max_name and the dot-fill count from #idx.name (byte
+  -- length). "индекс_короткий" is 16 cyrillic chars = 16 display cells but 31
+  -- bytes, so the byte-length version reserves far more dot-fill than needed
+  -- and the two index lines' "btree" markers land at different display
+  -- columns (visibly misaligned); the fixed version puts both at the same
+  -- column.
   local props = mock_props(
     { { column_name = "id", data_type = "integer", is_nullable = "NO", column_default = "" } },
     {
@@ -135,6 +141,19 @@ test("build_lines: index name dot-fill alignment uses display width", function()
   local joined = table.concat(lines, "\n")
   contains(joined, "индекс_короткий", "cyrillic index name intact")
   contains(joined, "....", "dot-fill still renders")
+
+  local idx_lines = {}
+  for _, l in ipairs(lines) do
+    if l:find("btree", 1, true) then table.insert(idx_lines, l) end
+  end
+  eq(#idx_lines, 2, "found both index lines")
+  local first_col
+  for _, l in ipairs(idx_lines) do
+    local byte_pos = l:find("btree", 1, true)
+    local col = vim.fn.strdisplaywidth(l:sub(1, byte_pos - 1))
+    first_col = first_col or col
+    eq(col, first_col, "index type ('btree') aligned at the same display column: " .. l)
+  end
 end)
 
 -- ── summary ──────────────────────────────────────────────────────────────────

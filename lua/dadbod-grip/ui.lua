@@ -4,9 +4,11 @@
 local M = {}
 
 -- ── display-width text layout ─────────────────────────────────────────────
--- Shared by view.lua (the grid) and properties.lua/profile.lua/diff.lua/
--- er_diagram.lua (the auxiliary report views), so alignment logic for
--- non-ASCII column/cell values (Cyrillic, CJK, emoji) lives in one place.
+-- Shared by view.lua (the grid) and properties.lua/profile.lua/diff.lua (the
+-- auxiliary report views), so alignment logic for non-ASCII column/cell
+-- values (Cyrillic, CJK, emoji) lives in one place. er_diagram.lua does NOT
+-- use this: it already routes every width through vim.fn.strdisplaywidth
+-- directly and keeps its own truncate_col (verified correct, Task 11).
 --
 -- Bytes \32-\126 are exactly space..~ printable ASCII. The range deliberately
 -- excludes tab (\9, whose width depends on 'tabstop'), every other control byte

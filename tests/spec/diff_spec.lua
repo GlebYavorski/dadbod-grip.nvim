@@ -252,12 +252,17 @@ end)
 -- line's dash count from #lines[1] (bytes) instead of its display width.
 
 test("render_unified: cyrillic and CJK/emoji values keep columns aligned", function()
+  -- Column name itself is Cyrillic ("метка", not "label"): format_header pads
+  -- it to display width but never truncates, so its byte length can exceed
+  -- its display width. That's what makes the separator-dash-count assertion
+  -- below actually exercise the #lines[1]-vs-strdisplaywidth(lines[1]) fix —
+  -- an ASCII column name can't distinguish the two.
   local left = make_state(
-    {"id", "label"}, {"id"},
+    {"id", "метка"}, {"id"},
     {{"1", "тест значение очень длинное строка"}, {"2", "短"}}
   )
   local right = make_state(
-    {"id", "label"}, {"id"},
+    {"id", "метка"}, {"id"},
     {{"1", "другое значение тоже очень длинное"}, {"2", "🍜ラーメン"}}
   )
   local result = diff.compute(left, right)
@@ -271,8 +276,8 @@ test("render_unified: cyrillic and CJK/emoji values keep columns aligned", funct
   -- "  " prefix (2 cells) + dashes should equal the header's display width.
   eq(2 + #sep_dashes, header_dw, "separator dash count matches header display width")
 
-  -- Every "label" cell (the long cyrillic values get truncated to fit the
-  -- 30-cell cap) must (a) be exactly widths.label display cells wide and
+  -- Every "метка" cell (the long cyrillic values get truncated to fit the
+  -- 30-cell cap) must (a) be exactly widths.метка display cells wide and
   -- (b) never split a multi-byte character in half. Old code truncated with
   -- v:sub(1, widths[col] - 1) — a byte offset built from a display-width
   -- number — which sliced mid-character for these inputs.
@@ -284,15 +289,15 @@ test("render_unified: cyrillic and CJK/emoji values keep columns aligned", funct
   end
   assert(#data_rows > 0, "has data rows")
   for _, l in ipairs(data_rows) do
-    -- Field layout: "  " .. id_col .. " | " .. label_col .. "  " .. suffix
+    -- Field layout: "  " .. id_col .. " | " .. метка_col .. "  " .. suffix
     local sep_byte = l:find(" | ", 1, true)
     assert(sep_byte, "row has column separator: " .. l)
     local rest = l:sub(sep_byte + 3)
-    -- label field ends at the next run of 2+ spaces (before the suffix), or
+    -- data field ends at the next run of 2+ spaces (before the suffix), or
     -- at end of string if there's no suffix.
     local field_end = rest:find("  ", 1, true)
-    local label_field = field_end and rest:sub(1, field_end - 1) or rest
-    assert(is_valid_utf8(label_field), "label field is valid UTF-8, not split mid-character: " .. label_field)
+    local data_field = field_end and rest:sub(1, field_end - 1) or rest
+    assert(is_valid_utf8(data_field), "data field is valid UTF-8, not split mid-character: " .. data_field)
   end
 end)
 
