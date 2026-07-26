@@ -2164,17 +2164,76 @@ local function resolve_row_bp(r, line, fallback)
 end
 
 -- ── keymap wiring ─────────────────────────────────────────────────────────
-function M._setup_keymaps(bufnr)
+-- One function per keymap group; they all share the helper set built once by
+-- make_keymap_ctx() instead of redefining it. Registration order matters: for
+-- a given lhs the last vim.keymap.set() wins, so _setup_keymaps() must keep
+-- calling the sections in the order they are defined below.
+
+--- Helpers shared by every keymap section: the four map wrappers, the visual
+--- selection row collector and the cell editor (also reached via <CR>).
+local function make_keymap_ctx(bufnr)
   local km = require("dadbod-grip.keymaps")
-  local function map(key, fn, desc)
+  local ctx = { bufnr = bufnr, km = km }
+
+  function ctx.map(key, fn, desc)
     vim.keymap.set("n", key, fn, { buffer = bufnr, desc = desc, silent = true })
   end
   -- kmap: lookup action key via keymaps.lua, skip if false (user disabled)
-  local function kmap(action, fn, desc)
+  function ctx.kmap(action, fn, desc)
     local key = km.get(action)
-    if key then map(key, fn, desc) end
+    if key then ctx.map(key, fn, desc) end
+  end
+  function ctx.vmap(key, fn, desc)
+    vim.keymap.set("x", key, fn, { buffer = bufnr, desc = desc, silent = true })
+  end
+  function ctx.kvmap(action, fn, desc)
+    local key = km.get(action)
+    if key then ctx.vmap(key, fn, desc) end
   end
 
+  -- Helper: collect row indices from visual selection
+  function ctx.get_visual_rows()
+    local start_line = vim.fn.line("v")
+    local end_line = vim.fn.line(".")
+    if start_line > end_line then start_line, end_line = end_line, start_line end
+    local session = M._sessions[bufnr]
+    if not session or not session._render then return nil end
+    local r = session._render
+    local ds = r.data_start or 4
+    local rows = {}
+    for line = start_line, end_line do
+      local row_order = line - ds + 1
+      if row_order >= 1 and row_order <= #r.ordered then
+        table.insert(rows, r.ordered[row_order])
+      end
+    end
+    return rows
+  end
+
+  -- e/i: edit cell
+  function ctx.edit_cell()
+    local session = M._sessions[bufnr]
+    if not session then return end
+    if not is_editable(session) then
+      vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
+      return
+    end
+    local cell = M.get_cell(bufnr)
+    if not cell then
+      vim.notify("No cell under cursor", vim.log.levels.INFO)
+      return
+    end
+    if session.on_edit then session.on_edit(bufnr, cell) end
+  end
+
+  return ctx
+end
+
+
+--- Row and cell editing: welcome/query pad entry, refresh, edit, delete,
+--- insert, clone, apply, undo/redo, yank, NULL, column set.
+local function setup_edit_keymaps(bufnr, ctx)
+  local kmap, edit_cell = ctx.kmap, ctx.edit_cell
   -- Q: go to welcome screen (home)
   kmap("welcome", function() require("dadbod-grip").open_welcome() end, "Welcome screen")
 
@@ -2207,21 +2266,6 @@ function M._setup_keymaps(bufnr)
     if session.on_refresh then session.on_refresh(bufnr) end
   end, "Refresh query")
 
-  -- e/i: edit cell
-  local function edit_cell()
-    local session = M._sessions[bufnr]
-    if not session then return end
-    if not is_editable(session) then
-      vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
-      return
-    end
-    local cell = M.get_cell(bufnr)
-    if not cell then
-      vim.notify("No cell under cursor", vim.log.levels.INFO)
-      return
-    end
-    if session.on_edit then session.on_edit(bufnr, cell) end
-  end
   kmap("grid_edit", edit_cell, "Edit cell")
 
   -- d: toggle delete row
@@ -2519,34 +2563,12 @@ function M._setup_keymaps(bufnr)
     M._column_set(bufnr)
   end, "Set column value for all visible rows")
 
-  -- ── visual mode batch editing ──────────────────────────────────────────
-  local function vmap(key, fn, desc)
-    vim.keymap.set("x", key, fn, { buffer = bufnr, desc = desc, silent = true })
-  end
-  local function kvmap(action, fn, desc)
-    local key = km.get(action)
-    if key then vmap(key, fn, desc) end
-  end
+end
 
-  -- Helper: collect row indices from visual selection
-  local function get_visual_rows()
-    local start_line = vim.fn.line("v")
-    local end_line = vim.fn.line(".")
-    if start_line > end_line then start_line, end_line = end_line, start_line end
-    local session = M._sessions[bufnr]
-    if not session or not session._render then return nil end
-    local r = session._render
-    local ds = r.data_start or 4
-    local rows = {}
-    for line = start_line, end_line do
-      local row_order = line - ds + 1
-      if row_order >= 1 and row_order <= #r.ordered then
-        table.insert(rows, r.ordered[row_order])
-      end
-    end
-    return rows
-  end
-
+--- Visual mode: selection clamped to the data rows (gg/G/j/k) plus batch
+--- edit / delete / NULL over the selected rows.
+local function setup_visual_batch_keymaps(bufnr, ctx)
+  local vmap, kvmap, get_visual_rows = ctx.vmap, ctx.kvmap, ctx.get_visual_rows
   -- Visual gg/G/j/k: clamp selection to the data-row range so it stops at the
   -- last data row instead of overshooting onto the separator/footer/hint line
   -- (issue #20). Mirrors the normal-mode clamps; like them, it ignores counts.
@@ -2636,7 +2658,13 @@ function M._setup_keymaps(bufnr)
     M.apply_edit(bufnr, st)
     vim.notify("Set " .. #row_indices .. " cells to NULL in " .. col_name, vim.log.levels.INFO)
   end, "Batch set NULL")
+end
 
+--- Inspection floats: staged SQL preview/copy, table info and properties,
+--- column rename, cell explain, cell expand, row view, cell buffer, JSON
+--- tree, visual stack-inspect and two-row compare.
+local function setup_inspect_keymaps(bufnr, ctx)
+  local kmap, vmap, kvmap, get_visual_rows, edit_cell, km = ctx.kmap, ctx.vmap, ctx.kvmap, ctx.get_visual_rows, ctx.edit_cell, ctx.km
   -- gs: preview staged SQL (or pending mutation SQL) in float
   kmap("grid_preview_sql", function()
     local session = M._sessions[bufnr]
@@ -3158,7 +3186,12 @@ function M._setup_keymaps(bufnr)
     vim.keymap.set("n", "]p", "<Nop>", { buffer = popup_buf, silent = true })
     vim.keymap.set("n", "[p", "<Nop>", { buffer = popup_buf, silent = true })
   end, "Compare two selected rows")
+end
 
+--- Cursor movement and column layout: column/row navigation, first/last
+--- column, hide/restore columns, width cycling, visibility picker.
+local function setup_nav_keymaps(bufnr, ctx)
+  local kmap = ctx.kmap
   -- Shared helper: navigate to column by visible index offset.
   -- Works on data rows, header row, and type annotation row.
   local function nav_col(bufnr_l, offset, use_finish)
@@ -3596,7 +3629,12 @@ function M._setup_keymaps(bufnr)
       nav_col(bufnr, 1, true)
     end
   end, "End of current cell (then next)")
+end
 
+--- Saved queries (gq), modified-row jumps ({ }), paste (p/P), visual yank,
+--- live SQL float (gl) and the column type row (T).
+local function setup_misc_keymaps(bufnr, ctx)
+  local kmap, kvmap, get_visual_rows = ctx.kmap, ctx.kvmap, ctx.get_visual_rows
   -- gq: load saved query (open query pad + picker)
   kmap("load_saved", function()
     local session_q = M._sessions[bufnr]
@@ -3806,9 +3844,11 @@ function M._setup_keymaps(bufnr)
     vim.notify("Column types: " .. (session.show_types and "ON" or "OFF"), vim.log.levels.INFO)
     M.render(bufnr, session.state)
   end, "Toggle column types")
+end
 
-  -- ── sort / filter / pagination keymaps ──────────────────────────────────
-
+--- Sorting, filtering, filter presets, export-to-file and pagination.
+local function setup_sort_filter_keymaps(bufnr, ctx)
+  local kmap = ctx.kmap
   -- Helper: warn if pending changes, return true if user wants to proceed
   local function confirm_discard_changes(action_name)
     local session_c = M._sessions[bufnr]
@@ -4133,9 +4173,11 @@ function M._setup_keymaps(bufnr)
     if session_x.on_requery then session_x.on_requery(bufnr, new_spec) end
     vim.notify("View reset", vim.log.levels.INFO)
   end, "Reset view (clear sort/filter/page)")
+end
 
-  -- ── FK navigation keymaps ─────────────────────────────────────────────
-
+--- Foreign key navigation: follow (gf), reverse lookup (gr), back (<C-o>).
+local function setup_fk_keymaps(bufnr, ctx)
+  local kmap = ctx.kmap
   -- gf: navigate to FK referenced row
   kmap("grid_fk_follow", function()
     local session_fk = M._sessions[bufnr]
@@ -4247,9 +4289,12 @@ function M._setup_keymaps(bufnr)
     end
     vim.notify("Back to " .. (frame.table_name or "previous"), vim.log.levels.INFO)
   end, "Go back (FK navigation)")
+end
 
-  -- ── aggregate / column stats / export keymaps ─────────────────────────
-
+--- Aggregates and column stats, table profile, clipboard export, EXPLAIN of
+--- the current query and opening a URL from the cell under the cursor.
+local function setup_aggregate_keymaps(bufnr, ctx)
+  local kmap, kvmap, get_visual_rows = ctx.kmap, ctx.kvmap, ctx.get_visual_rows
   -- ga: aggregate current column (normal: all rows, visual: selected rows).
   -- row_indices = nil means "the whole column". Normal mode must NOT consult
   -- '< / '>: those marks hold the *previous* visual selection, so ga silently
@@ -4474,7 +4519,13 @@ function M._setup_keymaps(bufnr)
       vim.notify("Not a URL", vim.log.levels.INFO)
     end
   end, "Open URL in current cell")
+end
 
+--- Everything that leaves the grid or changes the session: table diff, DDL,
+--- schema browser, table/connection pickers, watch mode, write mode, open as
+--- editable, query history, AI, pin and the result switcher.
+local function setup_tool_keymaps(bufnr, ctx)
+  local map, kmap = ctx.map, ctx.kmap
   -- gD: diff against another table (picker with schema-overlap preview)
   kmap("grid_diff", function()
     local session_d = M._sessions[bufnr]
@@ -4896,8 +4947,11 @@ function M._setup_keymaps(bufnr)
       end,
     })
   end, "Result switcher (all open results)")
+end
 
-  -- ── tab view keymaps (1-9) ───────────────────────────────────────────────
+--- Tab view keys 1-9 plus ER diagram, help and the command palette.
+local function setup_tab_view_keymaps(bufnr, ctx)
+  local map, kmap, km = ctx.map, ctx.kmap, ctx.km
   -- 1: schema sidebar (already in grid = always primary: open/focus sidebar)
   kmap("tab_1", function()
     local _s = M._sessions[bufnr]
@@ -4982,8 +5036,11 @@ function M._setup_keymaps(bufnr)
   kmap("palette", function()
     require("dadbod-grip.palette").open("grid")
   end, "Command palette")
+end
 
-  -- ── column highlight (CursorMoved) ────────────────────────────────────────
+--- Highlight the column under the cursor, header row included. Keyed on the
+--- _render table so a redraw invalidates the cache by itself.
+local function setup_column_highlight(bufnr)
   vim.api.nvim_create_autocmd("CursorMoved", {
     group  = _ag,
     buffer = bufnr,
@@ -5038,6 +5095,23 @@ function M._setup_keymaps(bufnr)
       end
     end,
   })
+end
+
+--- Wire all buffer-local grid keymaps and the column-highlight autocmd.
+--- Section order is load bearing (see the note above make_keymap_ctx).
+function M._setup_keymaps(bufnr)
+  local ctx = make_keymap_ctx(bufnr)
+  setup_edit_keymaps(bufnr, ctx)
+  setup_visual_batch_keymaps(bufnr, ctx)
+  setup_inspect_keymaps(bufnr, ctx)
+  setup_nav_keymaps(bufnr, ctx)
+  setup_misc_keymaps(bufnr, ctx)
+  setup_sort_filter_keymaps(bufnr, ctx)
+  setup_fk_keymaps(bufnr, ctx)
+  setup_aggregate_keymaps(bufnr, ctx)
+  setup_tool_keymaps(bufnr, ctx)
+  setup_tab_view_keymaps(bufnr, ctx)
+  setup_column_highlight(bufnr)
 end
 
 --- Open the full help popup. Called from grid, query pad, and schema sidebar.
