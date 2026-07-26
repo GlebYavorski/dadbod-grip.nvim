@@ -161,34 +161,54 @@ vim.api.nvim_create_autocmd("ColorScheme", {
 local _ag = vim.api.nvim_create_augroup("DadbodGripView", { clear = true })
 
 -- ── column width calculation ──────────────────────────────────────────────
+-- Bytes \32-\126 are exactly space..~ printable ASCII. The range deliberately
+-- excludes tab (\9, whose width depends on 'tabstop'), every other control byte
+-- and DEL (strdisplaywidth renders those as a 2-cell "^X"), and everything
+-- >= 0x80 (UTF-8 lead/continuation bytes). For a string of only such bytes, and
+-- only then, one byte is one character is one display cell — so #s is the
+-- display width and s:sub(1, n) is a correctly truncated prefix, with no vim.fn
+-- round-trip per character. That is the common case for a grid of numbers, ids
+-- and short labels, which is why it is worth a branch.
 local function truncate_display(s, width, ellipsize)
   s = tostring(s or "")
   if width <= 0 then return "", 0 end
-  local dw = vim.fn.strdisplaywidth(s)
+
+  local ascii = not s:find("[^\32-\126]")
+
+  local dw = ascii and #s or vim.fn.strdisplaywidth(s)
   if dw <= width then return s, dw end
 
   local ell = ellipsize ~= false and "…" or ""
+  -- Not hoisted to a constant: 'ambiwidth' can change at runtime.
   local ell_w = vim.fn.strdisplaywidth(ell)
   if ell ~= "" and ell_w <= width and width <= ell_w then
     return ell, ell_w
   end
 
   local target = math.max(0, width - ell_w)
-  local out = {}
-  local used = 0
-  for i = 0, vim.fn.strchars(s) - 1 do
-    local ch = vim.fn.strcharpart(s, i, 1)
-    local cw = vim.fn.strdisplaywidth(ch)
-    if used + cw > target then break end
-    out[#out + 1] = ch
-    used = used + cw
+  local out, used
+  if ascii then
+    -- dw > width >= target, so the prefix is always exactly `target` bytes.
+    out = s:sub(1, target)
+    used = #out
+  else
+    local parts = {}
+    used = 0
+    for i = 0, vim.fn.strchars(s) - 1 do
+      local ch = vim.fn.strcharpart(s, i, 1)
+      local cw = vim.fn.strdisplaywidth(ch)
+      if used + cw > target then break end
+      parts[#parts + 1] = ch
+      used = used + cw
+    end
+    out = table.concat(parts)
   end
 
   if ell ~= "" and used + ell_w <= width then
-    out[#out + 1] = ell
+    out = out .. ell
     used = used + ell_w
   end
-  return table.concat(out), used
+  return out, used
 end
 
 local function pad_display(s, width, ellipsize)
