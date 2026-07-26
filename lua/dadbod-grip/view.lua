@@ -1698,26 +1698,15 @@ local function fetch_view_fk(table_name, url, session)
   for _, fk in ipairs(fks) do
     table.insert(rows, { "→ outbound", fk.column or "", fk.ref_table or "", fk.ref_column or "" })
   end
-  -- Inbound: other tables that reference this table (best-effort scan)
-  local all_tables = session._schema_tables or {}
-  if next(all_tables) == nil then
-    local tlist, terr = db_mod.list_tables(url)
-    if tlist and not terr then
-      all_tables = tlist
-      session._schema_tables = tlist
-    end
-  end
-  local base_tbl = table_name:match("^[^.]+%.(.+)$") or table_name
-  for _, t in ipairs(all_tables) do
-    if t.name ~= table_name then
-      local other_fks = db_mod.get_foreign_keys(t.name, url)
-      if other_fks then
-        for _, fk in ipairs(other_fks) do
-          if fk.ref_table == table_name or fk.ref_table == base_tbl then
-            table.insert(rows, { "← inbound", t.name .. "." .. (fk.column or ""), table_name, fk.ref_column or "" })
-          end
-        end
-      end
+  -- Inbound: other tables that reference this table. get_referencing_foreign_keys
+  -- answers this in one query on every adapter that supports it (and falls back
+  -- to the same list_tables + per-table scan otherwise), instead of spawning one
+  -- CLI process per table in the schema. Same source as the gr keymap.
+  local refs = db_mod.get_referencing_foreign_keys(table_name, url) or {}
+  for _, ref in ipairs(refs) do
+    -- Self-references are already listed above as outbound; don't repeat them.
+    if ref.table ~= table_name then
+      table.insert(rows, { "← inbound", (ref.table or "") .. "." .. (ref.column or ""), table_name, ref.ref_column or "" })
     end
   end
   if #rows == 0 then
