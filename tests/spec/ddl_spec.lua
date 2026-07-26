@@ -212,6 +212,47 @@ test("drop table CASCADE: unknown/nil kind never appends CASCADE", function()
   eq(ddl_sql, 'DROP TABLE "users"', "unresolved adapter kind must not get CASCADE")
 end)
 
+-- ── drop table: referencing-FK filter (M._filter_referencing) ───────────────
+-- drop_table replaced its N+1 per-table FK scan with one call to
+-- db.get_referencing_foreign_keys(). That query is schema-exact on
+-- postgresql/mysql/duckdb/sqlite; sqlserver has no dedicated implementation
+-- and falls back (in db.lua) to a bare-name scan that can't distinguish two
+-- same-named tables in different schemas. _filter_referencing is the guard
+-- that keeps that one combination from widening past the old scan's strictness.
+
+test("filter_referencing: bare table name is never filtered, any kind", function()
+  local refs = { { table = "orders", column = "user_id", ref_column = "id" } }
+  for _, kind in ipairs({ "postgresql", "mysql", "duckdb", "sqlite", "sqlserver", nil }) do
+    local out = ddl._filter_referencing(refs, "users", kind)
+    eq(#out, 1, "kind=" .. tostring(kind))
+  end
+end)
+
+test("filter_referencing: schema-qualified name kept for schema-exact adapters", function()
+  local refs = { { table = "orders", column = "user_id", ref_column = "id" } }
+  for _, kind in ipairs({ "postgresql", "mysql", "duckdb", "sqlite" }) do
+    local out = ddl._filter_referencing(refs, "public.users", kind)
+    eq(#out, 1, "kind=" .. kind .. " should keep exact-schema matches")
+  end
+end)
+
+test("filter_referencing: schema-qualified name dropped for adapters without a dedicated query", function()
+  local refs = { { table = "orders", column = "user_id", ref_column = "id" } }
+  local out = ddl._filter_referencing(refs, "dbo.users", "sqlserver")
+  eq(#out, 0, "sqlserver bare-name fallback can't be trusted for a qualified name")
+end)
+
+test("filter_referencing: unresolved/unknown kind treated like a non-exact adapter", function()
+  local refs = { { table = "orders", column = "user_id", ref_column = "id" } }
+  local out = ddl._filter_referencing(refs, "sales.users", nil)
+  eq(#out, 0, "unknown kind + qualified name is filtered defensively")
+end)
+
+test("filter_referencing: empty input stays empty", function()
+  local out = ddl._filter_referencing({}, "schema.users", "sqlserver")
+  eq(#out, 0, "nothing to filter")
+end)
+
 -- ── DDL SQL patterns: add column ─────────────────────────────────────────────
 
 test("add column SQL: basic format", function()

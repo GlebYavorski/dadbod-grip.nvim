@@ -13,6 +13,29 @@ local M = {}
 -- sqlserver has no such clause at all.
 local CASCADE_KINDS = { postgresql = true, duckdb = true }
 
+-- Adapters whose db.get_referencing_foreign_keys() has a dedicated query that
+-- filters by schema+table server-side (see each adapter's own
+-- get_referencing_foreign_keys). sqlserver has none, so db.lua falls back to
+-- a bare-name scan there (matches any table sharing the bare name, regardless
+-- of schema) -- see M._filter_referencing below.
+local SCHEMA_EXACT_REF_KINDS = { postgresql = true, mysql = true, duckdb = true, sqlite = true }
+
+-- Guard against the one case where a single-query lookup can be less precise
+-- than the old per-table scan: table_name is schema-qualified (e.g.
+-- "sales.orders") and the adapter has no dedicated reverse-FK query, so the
+-- match came from db.lua's bare-name fallback and may actually belong to a
+-- same-named table in a different schema. None of the returned rows carry
+-- which schema they matched against, so there is no way to tell the genuine
+-- ones apart -- drop the whole batch rather than risk a false CASCADE or
+-- warning. This is also exactly what the old scan did in that combination:
+-- it compared against fk.ref_table, which every adapter returns unqualified,
+-- so a schema-qualified table_name never matched there either.
+local function filter_referencing(refs, table_name, kind)
+  if SCHEMA_EXACT_REF_KINDS[kind] then return refs end
+  if not table_name:find(".", 1, true) then return refs end
+  return {}
+end
+
 local _ag = vim.api.nvim_create_augroup("DadbodGripDDL", { clear = true })
 
 -- ── helpers ─────────────────────────────────────────────────────────────────
@@ -258,25 +281,13 @@ end
 function M.drop_table(table_name, url, on_done)
   local kind = adapters.kind(url)
 
-  -- Check for FK dependents
-  local fks = {}
-  local tables, _ = db.list_tables(url)
-  if tables then
-    for _, tbl in ipairs(tables) do
-      if tbl.name ~= table_name then
-        local t_fks, _ = db.get_foreign_keys(tbl.name, url)
-        if t_fks then
-          for _, fk in ipairs(t_fks) do
-            if fk.ref_table == table_name then
-              table.insert(fks, tbl.name .. "." .. fk.column .. " -> " .. table_name .. "." .. fk.ref_column)
-            end
-          end
-        end
-      end
-    end
-  end
+  -- Check for FK dependents: one query instead of a get_foreign_keys() spawn
+  -- per other table in the schema (see filter_referencing above for the one
+  -- adjustment needed to keep this as strict as that old per-table scan).
+  local refs = db.get_referencing_foreign_keys(table_name, url) or {}
+  refs = filter_referencing(refs, table_name, kind)
 
-  local has_referencing = #fks > 0
+  local has_referencing = #refs > 0
   local ddl_sql = build_drop_sql(table_name, kind, has_referencing)
 
   -- On adapters that can't CASCADE, an explicit heads-up beats a confusing
@@ -365,5 +376,6 @@ end
 -- Exposed for testing
 M._build_create_sql = build_create_sql
 M._build_drop_sql = build_drop_sql
+M._filter_referencing = filter_referencing
 
 return M
