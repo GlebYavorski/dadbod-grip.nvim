@@ -2,6 +2,10 @@
 -- Translates grip's {items, display, on_select, preview, on_delete} into
 -- telescope's pickers.new / finders / previewers / actions API.
 
+-- Load-bearing, not a leftover: this is the availability probe. grip_picker.pick
+-- pcall-requires this module and falls back to the built-in picker when the
+-- require throws, which is exactly what happens here when telescope is absent.
+-- M.open() re-requires the submodules it actually uses.
 require("telescope.pickers")
 
 local M = {}

@@ -2,6 +2,10 @@
 --- Translates grip's {items, display, on_select, preview, on_delete}
 --- into the Snacks.picker() API.
 
+-- Load-bearing, not a leftover: this is the availability probe. grip_picker.pick
+-- pcall-requires this module and falls back to the built-in picker when the
+-- require throws, which is exactly what happens here when snacks is absent.
+-- M.open() uses the global Snacks table, not this return value.
 require("snacks")
 
 local M = {}
