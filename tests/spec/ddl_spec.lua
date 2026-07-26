@@ -175,6 +175,43 @@ test("drop table SQL: table name is quoted", function()
   contains(ddl_sql, '"my table"', "quoted name")
 end)
 
+-- ── drop table SQL: CASCADE scoping (M._build_drop_sql) ──────────────────────
+
+test("drop table CASCADE: postgresql appends CASCADE when referenced", function()
+  local ddl_sql = ddl._build_drop_sql("users", "postgresql", true)
+  eq(ddl_sql, 'DROP TABLE "users" CASCADE', "postgresql + referenced")
+end)
+
+test("drop table CASCADE: duckdb appends CASCADE when referenced", function()
+  local ddl_sql = ddl._build_drop_sql("users", "duckdb", true)
+  eq(ddl_sql, 'DROP TABLE "users" CASCADE', "duckdb + referenced")
+end)
+
+test("drop table CASCADE: postgresql omits CASCADE when not referenced", function()
+  local ddl_sql = ddl._build_drop_sql("users", "postgresql", false)
+  eq(ddl_sql, 'DROP TABLE "users"', "postgresql, no referencing FKs")
+end)
+
+test("drop table CASCADE: sqlite never appends CASCADE, even when referenced", function()
+  local ddl_sql = ddl._build_drop_sql("users", "sqlite", true)
+  eq(ddl_sql, 'DROP TABLE "users"', "sqlite has no CASCADE syntax")
+end)
+
+test("drop table CASCADE: mysql never appends CASCADE, even when referenced", function()
+  local ddl_sql = ddl._build_drop_sql("users", "mysql", true)
+  eq(ddl_sql, 'DROP TABLE "users"', "mysql ignores CASCADE silently, so we must not send it")
+end)
+
+test("drop table CASCADE: sqlserver never appends CASCADE, even when referenced", function()
+  local ddl_sql = ddl._build_drop_sql("users", "sqlserver", true)
+  eq(ddl_sql, 'DROP TABLE "users"', "sqlserver has no CASCADE syntax")
+end)
+
+test("drop table CASCADE: unknown/nil kind never appends CASCADE", function()
+  local ddl_sql = ddl._build_drop_sql("users", nil, true)
+  eq(ddl_sql, 'DROP TABLE "users"', "unresolved adapter kind must not get CASCADE")
+end)
+
 -- ── DDL SQL patterns: add column ─────────────────────────────────────────────
 
 test("add column SQL: basic format", function()

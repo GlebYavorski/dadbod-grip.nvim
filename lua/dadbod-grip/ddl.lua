@@ -1,11 +1,17 @@
 -- ddl.lua: DDL operations (rename, add, drop columns; create/drop tables).
 -- Each operation previews the SQL, asks for confirmation, then executes.
 
-local db   = require("dadbod-grip.db")
-local sql  = require("dadbod-grip.sql")
-local ui   = require("dadbod-grip.ui")
+local adapters = require("dadbod-grip.adapters")
+local db       = require("dadbod-grip.db")
+local sql      = require("dadbod-grip.sql")
+local ui       = require("dadbod-grip.ui")
 
 local M = {}
+
+-- CLI adapters whose DROP TABLE actually understands CASCADE. sqlite rejects
+-- it as a syntax error; mysql parses but silently ignores it (misleading);
+-- sqlserver has no such clause at all.
+local CASCADE_KINDS = { postgresql = true, duckdb = true }
 
 local _ag = vim.api.nvim_create_augroup("DadbodGripDDL", { clear = true })
 
@@ -65,13 +71,19 @@ local function confirm_ddl(title, ddl_sql, callback)
   end
 end
 
-local function destructive_confirm(title, ddl_sql, confirm_word, callback)
+local function destructive_confirm(title, ddl_sql, confirm_word, callback, note)
   local lines = {
     "  WARNING: " .. title,
     "",
   }
   for line in (ddl_sql .. "\n"):gmatch("([^\n]*)\n") do
     table.insert(lines, "  " .. line)
+  end
+  if note then
+    table.insert(lines, "")
+    for line in (note .. "\n"):gmatch("([^\n]*)\n") do
+      table.insert(lines, "  " .. line)
+    end
   end
   table.insert(lines, "")
   table.insert(lines, '  Press y to confirm, then type "' .. confirm_word .. '"')
@@ -233,8 +245,18 @@ end
 
 -- ── drop table ──────────────────────────────────────────────────────────────
 
-function M.drop_table(table_name, url, on_done)
+-- Pure SQL builder: only postgresql/duckdb get " CASCADE" appended, since it's
+-- the only pair where the CLI actually honors it (see CASCADE_KINDS above).
+local function build_drop_sql(table_name, kind, has_referencing)
   local ddl_sql = "DROP TABLE " .. sql.quote_ident(table_name)
+  if has_referencing and CASCADE_KINDS[kind] then
+    ddl_sql = ddl_sql .. " CASCADE"
+  end
+  return ddl_sql
+end
+
+function M.drop_table(table_name, url, on_done)
+  local kind = adapters.kind(url)
 
   -- Check for FK dependents
   local fks = {}
@@ -254,8 +276,16 @@ function M.drop_table(table_name, url, on_done)
     end
   end
 
-  if #fks > 0 then
-    ddl_sql = ddl_sql .. " CASCADE"
+  local has_referencing = #fks > 0
+  local ddl_sql = build_drop_sql(table_name, kind, has_referencing)
+
+  -- On adapters that can't CASCADE, an explicit heads-up beats a confusing
+  -- server error (or, on MySQL, a silently ignored keyword) after the fact.
+  local note
+  if has_referencing and not CASCADE_KINDS[kind] then
+    local name = adapters.display_name(url) or "This adapter"
+    note = name .. " doesn't support CASCADE: dependent foreign keys won't be"
+      .. " dropped, so this may fail or leave dangling references."
   end
 
   destructive_confirm("DROP TABLE", ddl_sql, table_name, function()
@@ -266,7 +296,7 @@ function M.drop_table(table_name, url, on_done)
     end
     vim.notify("Dropped table " .. table_name, vim.log.levels.INFO)
     if on_done then on_done() end
-  end)
+  end, note)
 end
 
 -- ── create table ────────────────────────────────────────────────────────────
@@ -334,5 +364,6 @@ end
 
 -- Exposed for testing
 M._build_create_sql = build_create_sql
+M._build_drop_sql = build_drop_sql
 
 return M
