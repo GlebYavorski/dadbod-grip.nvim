@@ -128,12 +128,40 @@ end)
 
 -- ── empty containers ─────────────────────────────────────────────────────────
 
-test("json_to_lines: empty object produces { and }", function()
+test("json_to_lines: empty object collapses to {} on one line", function()
   local ok, decoded = pcall(vim.fn.json_decode, '{}')
   if not ok then return end
   local result = json_to_lines(decoded)
-  eq(result[1], "{")
-  eq(result[#result], "}")
+  eq(#result, 1)
+  eq(result[1], "{}")
+end)
+
+test("json_to_lines: empty array collapses to [] (not {})", function()
+  local ok, decoded = pcall(vim.fn.json_decode, '[]')
+  if not ok then return end
+  local result = json_to_lines(decoded)
+  eq(#result, 1)
+  eq(result[1], "[]")
+end)
+
+-- ── string escaping ──────────────────────────────────────────────────────────
+
+test("json_to_lines: newlines and tabs are escaped, output stays single-line", function()
+  local ok, decoded = pcall(vim.fn.json_decode, '{"s":"a\\nb\\tc"}')
+  if not ok then return end
+  local result = json_to_lines(decoded)
+  eq(#result, 3, "brace + one value line + brace")
+  contains(result[2], '"a\\nb\\tc"', "escaped value")
+  for _, line in ipairs(result) do
+    assert(not line:find("\n", 1, true), "no raw newline in output lines")
+  end
+end)
+
+test("json_to_lines: backslashes are escaped", function()
+  local ok, decoded = pcall(vim.fn.json_decode, '{"s":"back\\\\slash"}')
+  if not ok then return end
+  local result = json_to_lines(decoded)
+  contains(result[2], '"back\\\\slash"', "escaped backslash")
 end)
 
 -- ── max depth truncation ─────────────────────────────────────────────────────

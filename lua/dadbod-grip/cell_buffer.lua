@@ -38,12 +38,18 @@ local function is_dict(t)
   return n ~= #t
 end
 
--- Returns lines for a decoded value: first line unindented (caller prefixes
--- it), continuation lines carry absolute indentation for the given depth.
-local function pretty_lines(v, depth)
+--- Pretty-print a decoded JSON value as buffer lines.
+--- First line is unindented (the caller prefixes it), continuation lines carry
+--- absolute indentation for the given depth.
+--- @param v any        decoded value (table, scalar, or vim.NIL)
+--- @param depth number  indentation depth of this value (0 for the root)
+--- @param max_depth? number  containers deeper than this collapse to "..."
+--- @return string[] lines
+local function pretty_lines(v, depth, max_depth)
   if type(v) ~= "table" then
     return { vim.json.encode(v) }  -- handles strings, numbers, bools, vim.NIL
   end
+  if max_depth and depth >= max_depth then return { "..." } end
   local inner_pad = string.rep("  ", depth + 1)
   local close_pad = string.rep("  ", depth)
   if is_dict(v) then
@@ -53,7 +59,7 @@ local function pretty_lines(v, depth)
     table.sort(keys)
     local lines = { "{" }
     for i, k in ipairs(keys) do
-      local child = pretty_lines(v[k], depth + 1)
+      local child = pretty_lines(v[k], depth + 1, max_depth)
       child[1] = inner_pad .. vim.json.encode(k) .. ": " .. child[1]
       if i < #keys then child[#child] = child[#child] .. "," end
       vim.list_extend(lines, child)
@@ -64,7 +70,7 @@ local function pretty_lines(v, depth)
   if #v == 0 then return { "[]" } end
   local lines = { "[" }
   for i = 1, #v do
-    local child = pretty_lines(v[i], depth + 1)
+    local child = pretty_lines(v[i], depth + 1, max_depth)
     child[1] = inner_pad .. child[1]
     if i < #v then child[#child] = child[#child] .. "," end
     vim.list_extend(lines, child)
@@ -72,6 +78,10 @@ local function pretty_lines(v, depth)
   table.insert(lines, close_pad .. "]")
   return lines
 end
+
+-- The only JSON pretty-printer in the plugin: view.lua's display floats and
+-- editor pre-fill go through it too (with a depth cap).
+M.pretty_lines = pretty_lines
 
 -- ── value rendering ──────────────────────────────────────────────────────
 
