@@ -78,6 +78,35 @@ local function is_queryable_file(arg)
   return false
 end
 
+--- Resolve what a table-scoped user command should act on: the explicit
+--- argument first, then the table behind the current grip session.
+--- Notifies and returns nil when either the table or the connection is missing.
+--- @param cmd_opts table    user-command opts (reads .args)
+--- @param cmd_name string   command name, used as the warning prefix
+--- @param no_table_msg? string  override for the "no table" warning text
+--- @return string|nil table_name
+--- @return string|nil url
+local function resolve_target(cmd_opts, cmd_name, no_table_msg)
+  local table_name = vim.trim(cmd_opts.args or "")
+  if table_name == "" then
+    local session = view._sessions[vim.api.nvim_get_current_buf()]
+    if session and session.state.table_name then
+      table_name = session.state.table_name
+    end
+  end
+  if table_name == "" then
+    vim.notify(cmd_name .. ": " .. (no_table_msg or "provide a table name or run from a Grip buffer"),
+      vim.log.levels.WARN)
+    return nil
+  end
+  local url = db.get_url()
+  if not url then
+    vim.notify(cmd_name .. ": no database connection", vim.log.levels.WARN)
+    return nil
+  end
+  return table_name, url
+end
+
 -- Decide the query spec for a given :Grip argument.
 -- Returns (spec, table_name, file_path) or (nil, err_string).
 local function resolve_query(arg, page_size)
@@ -2000,24 +2029,8 @@ function M.setup(opts)
 
   -- Register :GripProfile command
   vim.api.nvim_create_user_command("GripProfile", function(cmd_opts)
-    local arg = vim.trim(cmd_opts.args or "")
-    local tbl = arg
-    if tbl == "" then
-      local bufnr_p = vim.api.nvim_get_current_buf()
-      local session_p = view._sessions[bufnr_p]
-      if session_p and session_p.state.table_name then
-        tbl = session_p.state.table_name
-      end
-    end
-    if tbl == "" then
-      vim.notify("GripProfile: provide a table name or run from a Grip buffer", vim.log.levels.WARN)
-      return
-    end
-    local conn = db.get_url()
-    if not conn then
-      vim.notify("GripProfile: no database connection", vim.log.levels.WARN)
-      return
-    end
+    local tbl, conn = resolve_target(cmd_opts, "GripProfile")
+    if not tbl then return end
     local profile = require("dadbod-grip.profile")
     profile.open(tbl, conn)
   end, {
@@ -2093,23 +2106,8 @@ function M.setup(opts)
 
   -- Register :GripDrop command
   vim.api.nvim_create_user_command("GripDrop", function(cmd_opts)
-    local table_name = vim.trim(cmd_opts.args or "")
-    if table_name == "" then
-      local bufnr = vim.api.nvim_get_current_buf()
-      local session = view._sessions[bufnr]
-      if session and session.state.table_name then
-        table_name = session.state.table_name
-      end
-    end
-    if table_name == "" then
-      vim.notify("GripDrop: provide a table name", vim.log.levels.WARN)
-      return
-    end
-    local url = db.get_url()
-    if not url then
-      vim.notify("GripDrop: no database connection", vim.log.levels.WARN)
-      return
-    end
+    local table_name, url = resolve_target(cmd_opts, "GripDrop", "provide a table name")
+    if not table_name then return end
     local ddl_mod = require("dadbod-grip.ddl")
     ddl_mod.drop_table(table_name, url, function()
       local schema_mod = require("dadbod-grip.schema")
@@ -2167,25 +2165,8 @@ function M.setup(opts)
 
   -- Register :GripProperties command
   vim.api.nvim_create_user_command("GripProperties", function(cmd_opts)
-    local arg = vim.trim(cmd_opts.args or "")
-    local table_name = arg ~= "" and arg or nil
-    -- Try to get table name from current grip session
-    if not table_name then
-      local bufnr = vim.api.nvim_get_current_buf()
-      local session = view._sessions[bufnr]
-      if session and session.state.table_name then
-        table_name = session.state.table_name
-      end
-    end
-    if not table_name then
-      vim.notify("GripProperties: provide a table name or run from a Grip buffer", vim.log.levels.WARN)
-      return
-    end
-    local url = db.get_url()
-    if not url then
-      vim.notify("GripProperties: no database connection", vim.log.levels.WARN)
-      return
-    end
+    local table_name, url = resolve_target(cmd_opts, "GripProperties")
+    if not table_name then return end
     local properties = require("dadbod-grip.properties")
     properties.open(table_name, url)
   end, {
