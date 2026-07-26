@@ -21,63 +21,15 @@ local function parse_url(url)
   return sql_util.parse_dadbod_url(url, "3306")
 end
 
--- MariaDB detection: cached at module level after first real detection.
--- nil = not yet detected; true/false = cached result.
-local _is_mariadb = nil
-
---- Detect whether the mysql binary is actually MariaDB.
---- Cached after first call. Safe to call multiple times.
-local function detect_mariadb()
-  if _is_mariadb ~= nil then return _is_mariadb end
-  if vim.fn.executable("mysql") == 0 then
-    _is_mariadb = false
-    return false
-  end
-  -- Synchronous shell call; uses string form to avoid E475 on non-executable.
-  local stdout = vim.fn.system("mysql --version 2>/dev/null")
-  _is_mariadb = type(stdout) == "string" and stdout:find("MariaDB") ~= nil
-  return _is_mariadb
-end
-
 --- Parse query output from mysql --batch (tab-separated).
 local function parse_output(stdout)
   return db_util.parse_batch(stdout)
 end
 
---- Build mysql CLI args and run a query.
---- Both MySQL and MariaDB use --batch (tab-separated output; --csv is not a mysql CLI flag).
+--- Build mysql CLI args and run a statement, query or DML alike.
+--- Both MySQL and MariaDB use --batch (tab-separated output; --csv is not a
+--- mysql CLI flag), and --batch is also what reports affected rows for DML.
 local function mysql_query(parsed, sql_str, timeout_ms)
-  local output_flag = "--batch"
-  local args = { "mysql", output_flag, "--init-command=SET sql_mode='ANSI_QUOTES,NO_BACKSLASH_ESCAPES'" }
-  if parsed.host then
-    args[#args + 1] = "-h"
-    args[#args + 1] = parsed.host
-  end
-  if parsed.port then
-    args[#args + 1] = "-P"
-    args[#args + 1] = parsed.port
-  end
-  if parsed.user then
-    args[#args + 1] = "-u"
-    args[#args + 1] = parsed.user
-  end
-  if parsed.pass and parsed.pass ~= "" then
-    args[#args + 1] = "-p" .. parsed.pass
-  end
-  if parsed.dbname then
-    args[#args + 1] = parsed.dbname
-  end
-  args[#args + 1] = "-e"
-  args[#args + 1] = sql_str
-
-  local stdout, stderr, code = adapters.run_cmd(args, timeout_ms or DEFAULT_TIMEOUT)
-  -- Strip the known password-on-CLI warning
-  stderr = stderr:gsub("mysql: %[Warning%][^\n]*command line interface can be insecure%.?\n?", "")
-  return stdout, stderr, code
-end
-
---- Run a DML statement (uses --batch instead of --csv for affected-row output).
-local function mysql_exec(parsed, sql_str, timeout_ms)
   local args = { "mysql", "--batch", "--init-command=SET sql_mode='ANSI_QUOTES,NO_BACKSLASH_ESCAPES'" }
   if parsed.host then
     args[#args + 1] = "-h"
@@ -101,6 +53,7 @@ local function mysql_exec(parsed, sql_str, timeout_ms)
   args[#args + 1] = sql_str
 
   local stdout, stderr, code = adapters.run_cmd(args, timeout_ms or DEFAULT_TIMEOUT)
+  -- Strip the known password-on-CLI warning
   stderr = stderr:gsub("mysql: %[Warning%][^\n]*command line interface can be insecure%.?\n?", "")
   return stdout, stderr, code
 end
@@ -527,7 +480,7 @@ function M.execute(sql_str, url)
   -- MySQL doesn't support DEFAULT VALUES; rewrite for compatibility
   sql_str = sql_str:gsub("DEFAULT VALUES", "() VALUES ()")
 
-  local stdout, stderr, code = mysql_exec(parsed, sql_str)
+  local stdout, stderr, code = mysql_query(parsed, sql_str)
   if code ~= 0 then
     local msg = stderr ~= "" and stderr or ("mysql exited with code " .. code)
     return nil, msg
@@ -551,8 +504,5 @@ end
 
 -- Exposed for testing
 M._parse_url = parse_url
-M._detect_mariadb = detect_mariadb
-function M._reset_mariadb_cache() _is_mariadb = nil end
-function M._set_mariadb(val) _is_mariadb = val end
 
 return M

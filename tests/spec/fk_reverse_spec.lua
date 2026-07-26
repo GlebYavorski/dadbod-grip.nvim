@@ -200,7 +200,6 @@ end)
 
 test("mysql: reverse FK SQL filters on REFERENCED_TABLE_NAME", function()
   local mysql = require("dadbod-grip.adapters.mysql")
-  mysql._set_mariadb(false)
   local stdout = "child_table\tfk_column\tref_column\tconstraint_name\n"
     .. "orders\tuser_id\tid\torders_ibfk_1\n"
   local args = capture_system(stdout, function()
