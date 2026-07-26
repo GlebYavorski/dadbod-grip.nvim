@@ -195,8 +195,9 @@ test("build_schema_context: table missing from batch falls back to get_column_in
     { users = { { column_name = "id", data_type = "integer", is_nullable = "NO" } } },  -- "legacy" absent from batch
     { fallback_cols = { legacy = { { column_name = "old_id", data_type = "text", is_nullable = "YES" } } } }
   )
-  local ddl = ai.build_schema_context("test://batch-partial", "")
+  local ok_call, ddl = pcall(ai.build_schema_context, "test://batch-partial", "")
   restore()
+  assert(ok_call, "build_schema_context must not error: " .. tostring(ddl))
   contains(ddl, "CREATE TABLE users", "users from batch present")
   contains(ddl, "CREATE TABLE legacy", "legacy table present via per-table fallback")
   contains(ddl, "old_id", "legacy column present via fallback")
@@ -208,9 +209,24 @@ test("build_schema_context: adapter without batch support falls back entirely", 
     nil,  -- adapter has no get_schema_batch / it errored -- same as today's behavior
     { fallback_cols = { users = { { column_name = "id", data_type = "integer", is_nullable = "NO" } } } }
   )
-  local ddl = ai.build_schema_context("test://no-batch", "")
+  local ok_call, ddl = pcall(ai.build_schema_context, "test://no-batch", "")
   restore()
+  assert(ok_call, "build_schema_context must not error: " .. tostring(ddl))
   contains(ddl, "CREATE TABLE users", "users table present via full fallback")
+end)
+
+test("build_schema_context: table present in batch but with zero columns still falls back", function()
+  -- {} is truthy in Lua -- a naive "batch_cols[tbl] or get_column_info(...)" would
+  -- treat an empty-but-present batch entry as "already resolved" and drop the table.
+  local restore = mock_ai_db(
+    { { name = "users" } },
+    { users = {} },  -- present in batch, but batch resolved zero columns for it
+    { fallback_cols = { users = { { column_name = "id", data_type = "integer", is_nullable = "NO" } } } }
+  )
+  local ok_call, ddl = pcall(ai.build_schema_context, "test://batch-empty-cols", "")
+  restore()
+  assert(ok_call, "build_schema_context must not error: " .. tostring(ddl))
+  contains(ddl, "CREATE TABLE users", "users table recovered via fallback despite empty batch entry")
 end)
 
 -- ── _strip_fences ────────────────────────────────────────────────────────────

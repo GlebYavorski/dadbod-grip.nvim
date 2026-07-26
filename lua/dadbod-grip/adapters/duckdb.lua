@@ -856,87 +856,68 @@ function M.load_attachments(url, attachments)
 end
 
 --- Build the schema batch SQL for get_schema_batch / get_schema_batch_async.
---- With attachments: UNION ALL of main-catalog columns (full) + attached-catalog
---- table names only (fast: no remote column scan). One CLI spawn covers both.
---- Without attachments: plain information_schema.columns query.
+--- Always the same 8-column shape (rtype, database_name, schema_name, table_name,
+--- column_name, data_type, is_nullable, column_index) sourced from duckdb_columns() /
+--- duckdb_views() -- the exact tables get_column_info itself reads, so batch and
+--- per-table fallback can never disagree on data_type/is_nullable formatting again.
+--- 'col' rows = real columns (duckdb_columns() does not cover views).
+--- 'tbl' rows = view names only, registered with column_index 0 (no columns).
+--- Without attachments the scan is restricted to the main catalog (matches
+--- get_column_info's main-catalog behavior exactly); with attachments it is left
+--- unrestricted so duckdb_columns()/duckdb_views() also pick up attached catalogs.
+--- column_index drives ORDER BY so a table's columns arrive in their real, stable
+--- order -- UNION ALL alone gives no ordering guarantee within a group.
 local function _make_schema_batch_sql(has_attachments, main_catalog)
-  if has_attachments then
-    -- 7-column result: rtype, database_name, schema_name, table_name, column_name,
-    -- data_type, is_nullable ('YES'/'NO', same convention get_column_info uses).
-    -- 'col' rows = all DB columns (main + attached catalogs via duckdb_columns())
-    -- 'tbl' rows = views only (duckdb_columns() does not cover views)
-    return [[
-      SELECT 'col' AS rtype, database_name, schema_name, table_name, column_name, data_type,
-             CASE WHEN is_nullable THEN 'YES' ELSE 'NO' END AS is_nullable
-      FROM duckdb_columns()
-      WHERE internal = false
-      UNION ALL
-      SELECT 'tbl' AS rtype, database_name, schema_name, view_name, '', '', ''
-      FROM duckdb_views()
-      WHERE internal = false
-      ORDER BY 1, 2, 3
-    ]]
-  else
-    -- No attachments: information_schema.columns covers main DB + native schemas.
-    return [[
-      SELECT table_schema, table_name, column_name, data_type, is_nullable
-      FROM information_schema.columns
-      WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
-      ORDER BY table_schema, table_name, ordinal_position
-    ]]
+  local catalog_filter = ""
+  if not has_attachments then
+    catalog_filter = string.format(" AND database_name = '%s'", esc(main_catalog))
   end
+  return string.format([[
+    SELECT 'col' AS rtype, database_name, schema_name, table_name, column_name, data_type,
+           CASE WHEN is_nullable THEN 'YES' ELSE 'NO' END AS is_nullable,
+           column_index
+    FROM duckdb_columns()
+    WHERE internal = false%s
+    UNION ALL
+    SELECT 'tbl' AS rtype, database_name, schema_name, view_name, '', '', '', 0
+    FROM duckdb_views()
+    WHERE internal = false%s
+    ORDER BY 2, 3, 4, 8
+  ]], catalog_filter, catalog_filter)
 end
 
 --- Parse CSV rows from _make_schema_batch_sql into the schema cache format.
 --- Returns { [full_table_name] = [{column_name, data_type, is_nullable}] } or nil.
-local function _parse_schema_batch_rows(parsed, has_attachments, main_catalog)
+local function _parse_schema_batch_rows(parsed, main_catalog)
   if not parsed then return nil end
   local tables = {}
-  if has_attachments then
-    -- 7-column rows: rtype, database_name, schema_name, table_name, col_name, data_type, is_nullable
-    for _, row in ipairs(parsed.rows) do
-      local rtype       = row[1] or ""
-      local catalog     = row[2] or main_catalog
-      local schema_name = row[3] or "main"
-      local tname       = row[4] or ""
-      if rtype == "col" then
-        -- Column row from duckdb_columns() — covers both main catalog and attached catalogs.
-        local col_name  = row[5] or ""
-        local data_type = row[6] or ""
-        local full_name
-        if catalog == main_catalog then
-          full_name = (schema_name == "main") and tname or (schema_name .. "." .. tname)
-        else
-          -- Attached catalog: prefix with catalog alias (matches list_tables() output)
-          full_name = catalog .. "." .. tname
-        end
-        -- Nullability for attached catalogs mirrors get_column_info's attached-catalog
-        -- branch, which leaves it blank rather than trust duckdb_columns() there.
-        local is_nullable = (catalog == main_catalog) and (row[7] or "") or ""
-        tables[full_name] = tables[full_name] or {}
-        table.insert(tables[full_name], { column_name = col_name, data_type = data_type, is_nullable = is_nullable })
-      else
-        -- View row: duckdb_columns() does not include views, so register them name-only.
-        local full_name
-        if catalog == main_catalog then
-          full_name = (schema_name == "main") and tname or (schema_name .. "." .. tname)
-        else
-          full_name = catalog .. "." .. tname
-        end
-        tables[full_name] = tables[full_name] or {}
-      end
+  -- 8-column rows: rtype, database_name, schema_name, table_name, col_name, data_type,
+  -- is_nullable, column_index. ORDER BY in _make_schema_batch_sql guarantees rows for
+  -- the same table arrive in column_index order, so table.insert below preserves it.
+  for _, row in ipairs(parsed.rows) do
+    local rtype       = row[1] or ""
+    local catalog     = row[2] or main_catalog
+    local schema_name = row[3] or "main"
+    local tname       = row[4] or ""
+    local full_name
+    if catalog == main_catalog then
+      full_name = (schema_name == "main") and tname or (schema_name .. "." .. tname)
+    else
+      -- Attached catalog: prefix with catalog alias (matches list_tables() output)
+      full_name = catalog .. "." .. tname
     end
-  else
-    -- 5-column rows: table_schema, table_name, column_name, data_type, is_nullable
-    for _, row in ipairs(parsed.rows) do
-      local schema_name = row[1] or "main"
-      local tname       = row[2] or ""
-      local col_name    = row[3] or ""
-      local data_type   = row[4] or ""
-      local is_nullable = row[5] or ""
-      local full_name = (schema_name == "main") and tname or (schema_name .. "." .. tname)
+    if rtype == "col" then
+      -- Column row from duckdb_columns() — covers both main catalog and attached catalogs.
+      local col_name  = row[5] or ""
+      local data_type = row[6] or ""
+      -- Nullability for attached catalogs mirrors get_column_info's attached-catalog
+      -- branch, which leaves it blank rather than trust duckdb_columns() there.
+      local is_nullable = (catalog == main_catalog) and (row[7] or "") or ""
       tables[full_name] = tables[full_name] or {}
       table.insert(tables[full_name], { column_name = col_name, data_type = data_type, is_nullable = is_nullable })
+    else
+      -- View row: duckdb_columns() does not include views, so register them name-only.
+      tables[full_name] = tables[full_name] or {}
     end
   end
   return tables
@@ -959,7 +940,7 @@ function M.get_schema_batch(url)
   local stdout, _, code = duckdb(db_path, sql_str, nil, url)
   if code ~= 0 then return nil end
 
-  return _parse_schema_batch_rows(db_util.parse_csv(stdout), has_attachments, main_catalog)
+  return _parse_schema_batch_rows(db_util.parse_csv(stdout), main_catalog)
 end
 
 --- Async variant: fetches schema batch without blocking. Calls callback(tables) when done.
@@ -974,7 +955,7 @@ function M.get_schema_batch_async(url, callback)
 
   duckdb_async(db_path, sql_str, 8000, url, function(stdout, _, code)
     if code ~= 0 then callback(nil); return end
-    callback(_parse_schema_batch_rows(db_util.parse_csv(stdout), has_attachments, main_catalog))
+    callback(_parse_schema_batch_rows(db_util.parse_csv(stdout), main_catalog))
   end)
 end
 
@@ -992,5 +973,6 @@ M._extract_path = extract_path
 M._build_attach_prefix = build_attach_prefix
 M._detect_extension = detect_extension
 M._attach_unchecked = store_attachment
+M._make_schema_batch_sql = _make_schema_batch_sql
 
 return M

@@ -290,16 +290,18 @@ function M.build_schema_context(url, question)
   -- Columns for every table in one CLI spawn instead of one-per-table (this loop
   -- used to run up to 3 synchronous queries per table -- up to 90 spawns for a
   -- 30-table cap -- and blocked the UI for the duration). PKs and FKs have no
-  -- batch equivalent, so those stay per-table; batch_cols[tbl] missing (adapter
-  -- without batch support, or a table batch didn't surface) falls back to the
-  -- old per-table call so no table's columns are silently dropped from the prompt.
+  -- batch equivalent, so those stay per-table; batch_cols[tbl] missing or empty
+  -- (adapter without batch support, or a table batch didn't surface) falls back
+  -- to the old per-table call so no table's columns are silently dropped from
+  -- the prompt. "{} is truthy" would otherwise skip the fallback for a table
+  -- batch resolved with zero columns.
   local batch_cols = db.get_schema_batch(url)
 
   -- Build DDL for each table
   local ddl_lines = {}
   for _, tbl in ipairs(table_names) do
     local cols = batch_cols and batch_cols[tbl]
-    if not cols then
+    if not cols or #cols == 0 then
       cols = db.get_column_info(tbl, url)
     end
     local pks = db.get_primary_keys(tbl, url)

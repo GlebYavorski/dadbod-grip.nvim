@@ -975,14 +975,18 @@ test("sqlite get_schema_batch: failure returns nil", function()
 end)
 
 -- ── DuckDB get_schema_batch ───────────────────────────────────────────────────
--- Unlike pg/mysql/sqlite, DuckDB's batch query shape depends on whether the URL
--- has attachments (federation), so is_nullable threading is tested in both modes.
+-- Unlike pg/mysql/sqlite, DuckDB's batch query is always the same 8-column shape
+-- (rtype, database_name, schema_name, table_name, column_name, data_type,
+-- is_nullable, column_index), sourced from duckdb_columns()/duckdb_views() in both
+-- attachment modes -- so is_nullable/column-order is tested in both modes, plus the
+-- generated SQL text itself is checked directly (execution correctness can't be
+-- verified here -- no duckdb binary in this sandbox).
 
-test("duckdb get_schema_batch: no attachments, is_nullable comes from information_schema", function()
+test("duckdb get_schema_batch: no attachments, is_nullable comes from duckdb_columns()", function()
   local csv_stdout = table.concat({
-    "table_schema,table_name,column_name,data_type,is_nullable",
-    "main,users,id,INTEGER,NO",
-    "main,users,name,VARCHAR,YES",
+    "rtype,database_name,schema_name,table_name,column_name,data_type,is_nullable,column_index",
+    "col,plain,main,users,id,INTEGER,NO,0",
+    "col,plain,main,users,name,VARCHAR,YES,1",
   }, "\n") .. "\n"
 
   local result
@@ -992,7 +996,9 @@ test("duckdb get_schema_batch: no attachments, is_nullable comes from informatio
 
   assert(result ~= nil, "result must not be nil")
   assert(result["users"] ~= nil, "must have users key")
+  eq(result["users"][1].column_name, "id", "column order preserved (id first)")
   eq(result["users"][1].is_nullable, "NO", "id is NOT NULL")
+  eq(result["users"][2].column_name, "name", "column order preserved (name second)")
   eq(result["users"][2].is_nullable, "YES", "name is nullable")
 end)
 
@@ -1006,10 +1012,10 @@ test("duckdb get_schema_batch: with attachments, is_nullable kept for main catal
 
   -- database_name "test_attach" matches _extract_path("test_attach.db") -> main_catalog "test_attach".
   local csv_stdout = table.concat({
-    "rtype,database_name,schema_name,table_name,column_name,data_type,is_nullable",
-    "col,test_attach,main,users,id,INTEGER,NO",
-    "col,test_attach,main,users,name,VARCHAR,YES",
-    "col,sup,main,orders,id,INTEGER,YES",
+    "rtype,database_name,schema_name,table_name,column_name,data_type,is_nullable,column_index",
+    "col,test_attach,main,users,id,INTEGER,NO,0",
+    "col,test_attach,main,users,name,VARCHAR,YES,1",
+    "col,sup,main,orders,id,INTEGER,YES,0",
   }, "\n") .. "\n"
 
   local result
@@ -1026,6 +1032,49 @@ test("duckdb get_schema_batch: with attachments, is_nullable kept for main catal
   assert(result["sup.orders"] ~= nil, "attached-catalog table present")
   eq(result["sup.orders"][1].is_nullable, "",
     "attached catalog is_nullable blanked -- matches get_column_info's attached-catalog branch")
+end)
+
+test("duckdb get_schema_batch: parser preserves whatever row order the query returns", function()
+  -- Regression guard: the Lua parser must not silently reorder rows -- column
+  -- order in the prompt depends entirely on _make_schema_batch_sql's ORDER BY
+  -- (checked directly below), not on any re-sorting here.
+  local csv_stdout = table.concat({
+    "rtype,database_name,schema_name,table_name,column_name,data_type,is_nullable,column_index",
+    "col,plain,main,users,name,VARCHAR,YES,1",
+    "col,plain,main,users,id,INTEGER,NO,0",
+  }, "\n") .. "\n"
+
+  local result
+  with_system_mock(csv_stdout, "", 0, function()
+    result = duckdb.get_schema_batch("duckdb:plain.db")
+  end)
+
+  eq(result["users"][1].column_name, "name", "parser preserves row order as received")
+  eq(result["users"][2].column_name, "id", "parser preserves row order as received")
+end)
+
+test("duckdb _make_schema_batch_sql: orders by table_name + column_index so column order is stable", function()
+  -- Was previously "ORDER BY 1, 2, 3" (rtype, database_name, schema_name only) --
+  -- no guarantee at all for column order within a table, or even that a table's
+  -- rows stay grouped together.
+  local sql_no_att = duckdb._make_schema_batch_sql(false, "plain")
+  contains(sql_no_att, "column_index", "SELECT list includes column_index")
+  contains(sql_no_att, "ORDER BY 2, 3, 4, 8", "ORDER BY includes table_name + column_index")
+
+  local sql_att = duckdb._make_schema_batch_sql(true, "plain")
+  contains(sql_att, "column_index", "SELECT list includes column_index (attachments)")
+  contains(sql_att, "ORDER BY 2, 3, 4, 8", "ORDER BY includes table_name + column_index (attachments)")
+end)
+
+test("duckdb _make_schema_batch_sql: is_nullable sourced from duckdb_columns(), not information_schema", function()
+  -- get_column_info never reads information_schema for DuckDB (both its branches use
+  -- duckdb_columns()); the batch query previously did for the no-attachments case,
+  -- which meant its is_nullable format was an unverified guess rather than proven-correct.
+  local sql_no_att = duckdb._make_schema_batch_sql(false, "plain")
+  assert(not sql_no_att:find("information_schema", 1, true),
+    "no-attachments batch query must not depend on information_schema's is_nullable convention")
+  contains(sql_no_att, "duckdb_columns()", "sourced from duckdb_columns()")
+  contains(sql_no_att, "duckdb_views()", "views still registered name-only via duckdb_views()")
 end)
 
 -- ── Completion: get_schema prefers batch over per-table ─────────────────────
