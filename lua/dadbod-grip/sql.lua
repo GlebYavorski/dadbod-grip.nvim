@@ -72,6 +72,45 @@ function M.split_table_name(table_name, default_schema)
   return M.unquote_ident(schema), M.unquote_ident(tbl)
 end
 
+-- Parse a dadbod-style connection URL into its components.
+-- "scheme://user:pass@host:port/dbname" → {user, pass, host, port, dbname}
+-- The auth part is matched greedily up to the last @ so passwords may contain @.
+-- Missing pieces stay nil except host and port, which fall back to 127.0.0.1
+-- and default_port (each adapter passes its own). Returns nil if there is no
+-- "scheme://" prefix at all. No percent-decoding: values are passed to the
+-- client CLIs verbatim, exactly as dadbod hands them over.
+function M.parse_dadbod_url(url, default_port)
+  local rest = url:match("^%w+://(.+)$")
+  if not rest then return nil end
+
+  local user, pass, host, port, dbname
+
+  -- Split auth@hostpath (match last @ to support passwords containing @)
+  local auth, hostpath = rest:match("^(.+)@([^@]+)$")
+  if not auth then
+    hostpath = rest
+  else
+    user, pass = auth:match("^([^:]*):(.*)$")
+    if not user then user = auth end
+  end
+
+  -- Split hostpath into host:port/dbname
+  local hp, db = hostpath:match("^([^/]+)/(.+)$")
+  if not hp then hp = hostpath end
+  dbname = db
+
+  host, port = hp:match("^([^:]+):(%d+)$")
+  if not host then host = hp end
+
+  return {
+    user   = user,
+    pass   = pass,
+    host   = host or "127.0.0.1",
+    port   = port or default_port,
+    dbname = dbname,
+  }
+end
+
 -- M.build_update(table_name, pk_values, changes) → string
 -- pk_values: { col = "val", ... }
 -- changes:   { col = new_val, ... }  (data.NULL_SENTINEL means SQL NULL)

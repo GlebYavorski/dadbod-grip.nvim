@@ -18,36 +18,7 @@ local split_table_name = sql_util.split_table_name
 --- Parse a dadbod-style MySQL URL into connection components.
 --- "mysql://user:pass@host:port/dbname" → {user, pass, host, port, dbname}
 local function parse_url(url)
-  -- Strip scheme
-  local rest = url:match("^%w+://(.+)$")
-  if not rest then return nil end
-
-  local user, pass, host, port, dbname
-
-  -- Split auth@hostpath (match last @ to support passwords containing @)
-  local auth, hostpath = rest:match("^(.+)@([^@]+)$")
-  if not auth then
-    hostpath = rest
-  else
-    user, pass = auth:match("^([^:]*):(.*)$")
-    if not user then user = auth end
-  end
-
-  -- Split hostpath into host:port/dbname
-  local hp, db = hostpath:match("^([^/]+)/(.+)$")
-  if not hp then hp = hostpath end
-  dbname = db
-
-  host, port = hp:match("^([^:]+):(%d+)$")
-  if not host then host = hp end
-
-  return {
-    user   = user,
-    pass   = pass,
-    host   = host or "127.0.0.1",
-    port   = port or "3306",
-    dbname = dbname,
-  }
+  return sql_util.parse_dadbod_url(url, "3306")
 end
 
 -- MariaDB detection: cached at module level after first real detection.
