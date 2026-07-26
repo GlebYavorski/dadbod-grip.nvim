@@ -36,15 +36,11 @@ local OPTS = {
   discovery   = true,
 }
 
---- Return a shallow copy of the current options.
---- Used by query_pad to gate completion setup.
+--- Return a copy of the current options.
+--- Copied so callers cannot mutate the live config; a deep copy also means a
+--- new option added to OPTS is exposed without touching this function.
 function M.get_opts()
-  return { limit = OPTS.limit, max_col_width = OPTS.max_col_width,
-           timeout = OPTS.timeout, completion = OPTS.completion,
-           connections_path = OPTS.connections_path,
-           picker = OPTS.picker, pinned_max = OPTS.pinned_max,
-           border = OPTS.border, discovery = OPTS.discovery,
-           cell_split = OPTS.cell_split }
+  return vim.deepcopy(OPTS)
 end
 
 -- ── helpers ───────────────────────────────────────────────────────────────
