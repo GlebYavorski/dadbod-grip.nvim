@@ -222,5 +222,42 @@ test("info_float: entered by default", function()
   eq(vim.api.nvim_get_current_win(), before, "focus restored after close")
 end)
 
+-- ── report_split ────────────────────────────────────────────────────────────
+
+test("report_split: read-only named scratch buffer in a bottom split", function()
+  local before = win_count()
+  local bufnr, winid = ui.report_split({ "line 1", "line 2" }, "grip://test/report")
+  local ok, err = pcall(function()
+    eq(win_count(), before + 1, "one new window")
+    eq(vim.api.nvim_win_get_buf(winid), bufnr, "buffer shown in the split")
+    eq(vim.bo[bufnr].buftype, "nofile", "buftype")
+    eq(vim.bo[bufnr].modifiable, false, "read-only")
+    assert(vim.api.nvim_buf_get_name(bufnr):find("grip://test/report", 1, true),
+      "buffer name")
+    eq(vim.wo[winid].cursorline, true, "cursorline")
+    eq(vim.wo[winid].wrap, false, "wrap off")
+    local got = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    eq(got[1], "line 1", "line 1"); eq(got[2], "line 2", "line 2")
+  end)
+  pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+  if not ok then error(err, 0) end
+end)
+
+test("report_split: height follows the content, capped at 30", function()
+  local short = {}
+  for i = 1, 5 do short[i] = "l" .. i end
+  local b1, w1 = ui.report_split(short, "grip://test/short")
+  local h1 = vim.api.nvim_win_get_height(w1)
+  pcall(vim.api.nvim_buf_delete, b1, { force = true })
+  eq(h1, 7, "5 lines + 2")
+
+  local long = {}
+  for i = 1, 200 do long[i] = "l" .. i end
+  local b2, w2 = ui.report_split(long, "grip://test/long")
+  local h2 = vim.api.nvim_win_get_height(w2)
+  pcall(vim.api.nvim_buf_delete, b2, { force = true })
+  eq(h2, 30, "capped at 30")
+end)
+
 print(string.format("ui_spec: %d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

@@ -383,18 +383,7 @@ function M.open(table_name, url)
 
   local lines, marks = M.build_lines(data, vim.o.columns)
 
-  local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-  vim.api.nvim_set_option_value("buftype", "nofile", { buf = bufnr })
-  vim.api.nvim_set_option_value("modifiable", false, { buf = bufnr })
-  pcall(vim.api.nvim_buf_set_name, bufnr, "grip://profile/" .. table_name)
-
-  vim.cmd("botright split")
-  local winid = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(winid, bufnr)
-  vim.api.nvim_win_set_height(winid, math.min(30, #lines + 2))
-  vim.api.nvim_set_option_value("cursorline", true, { win = winid })
-  vim.api.nvim_set_option_value("wrap", false, { win = winid })
+  local bufnr = ui.report_split(lines, "grip://profile/" .. table_name)
 
   -- Highlights
   local ns = vim.api.nvim_create_namespace("grip_profile")

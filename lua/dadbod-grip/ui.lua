@@ -9,6 +9,32 @@ function M.border()
   return require("dadbod-grip").get_opts().border
 end
 
+--- Open a read-only report in a bottom split and return its buffer and window.
+---
+--- The shape shared by GripDiff and GripProfile: a named scratch buffer, a
+--- botright split sized to the content (capped at 30 lines), cursorline on and
+--- wrap off. Callers add their own highlights and keymaps afterwards.
+---
+--- @param lines string[]  report body
+--- @param name  string    buffer name, e.g. "grip://profile/users"
+--- @return integer bufnr, integer winid
+function M.report_split(lines, name)
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.api.nvim_set_option_value("buftype", "nofile", { buf = bufnr })
+  vim.api.nvim_set_option_value("modifiable", false, { buf = bufnr })
+  pcall(vim.api.nvim_buf_set_name, bufnr, name)
+
+  vim.cmd("botright split")
+  local winid = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(winid, bufnr)
+  vim.api.nvim_win_set_height(winid, math.min(30, #lines + 2))
+  vim.api.nvim_set_option_value("cursorline", true, { win = winid })
+  vim.api.nvim_set_option_value("wrap", false, { win = winid })
+
+  return bufnr, winid
+end
+
 --- Prompt on the cmdline; return nil when the user cancels.
 ---
 --- vim.fn.input() signals a cancel two ways: <Esc> returns `cancelreturn`, while
