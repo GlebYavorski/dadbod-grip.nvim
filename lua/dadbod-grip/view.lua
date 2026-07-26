@@ -1075,6 +1075,27 @@ function M._reveal_leftcol(leftcol, textwidth, start_vcol, finish_vcol)
   return target
 end
 
+--- After the cursor has been placed on a column at byte span `bp` on line `lnum`,
+--- scroll the window horizontally (if needed) so the column's right edge is
+--- visible. Converts the byte span to display columns — grid lines contain
+--- multibyte box-drawing chars, so bytes ≠ screen cells — and applies the offset
+--- from M._reveal_leftcol via winrestview. No-op when the edge already fits.
+local function reveal_col_edge(win, buf, lnum, bp)
+  if not (win and bp) then return end
+  local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
+  local start_vcol = vim.fn.strdisplaywidth(line:sub(1, bp.start)) + 1
+  local finish_vcol = vim.fn.strdisplaywidth(line:sub(1, bp.finish + 1))
+  local wininfo = vim.fn.getwininfo(win)[1]
+  if not wininfo then return end
+  local textwidth = wininfo.width - wininfo.textoff
+  local vw = vim.fn.winsaveview()
+  local new_leftcol = M._reveal_leftcol(vw.leftcol, textwidth, start_vcol, finish_vcol)
+  if new_leftcol then
+    vw.leftcol = new_leftcol
+    vim.fn.winrestview(vw)
+  end
+end
+
 -- ── badge helpers ────────────────────────────────────────────────────────
 
 --- Update the winbar badge for watch/write mode indicators.
@@ -3169,7 +3190,10 @@ function M._setup_keymaps(bufnr)
     local target_col = cols[target_idx]
     local bp = ref_bp[target_col]
     if not bp then return end
-    vim.api.nvim_win_set_cursor(0, { cursor[1], use_finish and bp.finish or bp.start })
+    local win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_cursor(win, { cursor[1], use_finish and bp.finish or bp.start })
+    -- Reveal the target column's right edge when it runs off-screen (wide columns).
+    reveal_col_edge(win, bufnr_l, cursor[1], bp)
   end
 
   -- Tab: next column
@@ -3534,21 +3558,7 @@ function M._setup_keymaps(bufnr)
     if not bp then return end
     local win = vim.api.nvim_get_current_win()
     vim.api.nvim_win_set_cursor(win, { cursor[1], bp.start })
-    -- Reveal the last column's right edge: nvim's default sidescroll would leave
-    -- a wide column running off the right of the window. Convert the column's
-    -- byte span to display columns (grid lines contain multibyte box-drawing
-    -- chars, so bytes ≠ screen cells) and nudge leftcol if the edge is hidden.
-    local line = vim.api.nvim_buf_get_lines(bufnr, cursor[1] - 1, cursor[1], false)[1] or ""
-    local start_vcol = vim.fn.strdisplaywidth(line:sub(1, bp.start)) + 1
-    local finish_vcol = vim.fn.strdisplaywidth(line:sub(1, bp.finish + 1))
-    local wininfo = vim.fn.getwininfo(win)[1]
-    local textwidth = wininfo.width - wininfo.textoff
-    local vw = vim.fn.winsaveview()
-    local new_leftcol = M._reveal_leftcol(vw.leftcol, textwidth, start_vcol, finish_vcol)
-    if new_leftcol then
-      vw.leftcol = new_leftcol
-      vim.fn.winrestview(vw)
-    end
+    reveal_col_edge(win, bufnr, cursor[1], bp)
   end, "Last column")
 
   -- e: vim-like end-of-cell. First moves to end of current cell; when already there, advances.
