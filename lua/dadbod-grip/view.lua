@@ -1354,9 +1354,11 @@ end
 M._json_to_lines = json_to_lines
 
 -- ── export formatter ─────────────────────────────────────────────────────
--- Pure function: rows is list-of-list (parallel to cols).
--- nil values represent SQL NULL.
--- Returns a list of strings (lines), one per output line.
+-- Pure function: rows is list-of-list (parallel to cols), nil values represent
+-- SQL NULL. Rows may have holes, so every branch indexes `for ci = 1, #cols`
+-- rather than iterating the row. Returns a list of strings (lines).
+-- The single formatter behind :GripExport / gX (file), gE (clipboard) and gy
+-- (markdown yank); `format` is one of csv, tsv, json, sql, markdown, grip.
 local function format_export(rows, cols, format, table_name)
   local tbl = table_name or "_grip_result"
 
@@ -1422,6 +1424,71 @@ local function format_export(rows, cols, format, table_name)
         "INSERT INTO %s (%s) VALUES (%s);",
         sql_mod.quote_ident(tbl), col_list, table.concat(vals, ", ")))
     end
+    return lines
+
+  elseif format == "tsv" then
+    local lines = { table.concat(cols, "\t") }
+    for _, row in ipairs(rows) do
+      local parts = {}
+      for ci = 1, #cols do table.insert(parts, row[ci] or "") end
+      table.insert(lines, table.concat(parts, "\t"))
+    end
+    return lines
+
+  elseif format == "markdown" then
+    local function pipe_esc(s) return (tostring(s):gsub("|", "\\|")) end
+    local lines = {
+      "| " .. table.concat(vim.tbl_map(pipe_esc, cols), " | ") .. " |",
+      "| " .. table.concat(vim.tbl_map(function() return "---" end, cols), " | ") .. " |",
+    }
+    for _, row in ipairs(rows) do
+      local parts = {}
+      for ci = 1, #cols do table.insert(parts, pipe_esc(row[ci] or "")) end
+      table.insert(lines, "| " .. table.concat(parts, " | ") .. " |")
+    end
+    return lines
+
+  elseif format == "grip" then
+    -- Box-drawing table matching the grid style. NULL shows as the word NULL,
+    -- numeric cells are right-aligned.
+    local widths = {}
+    for ci, col in ipairs(cols) do
+      widths[ci] = vim.fn.strdisplaywidth(col)
+    end
+    for _, row in ipairs(rows) do
+      for ci = 1, #cols do
+        widths[ci] = math.max(widths[ci], vim.fn.strdisplaywidth(tostring(row[ci] or "NULL")))
+      end
+    end
+    local rule_parts = {}
+    for ci = 1, #cols do
+      table.insert(rule_parts, string.rep("═", widths[ci] + 2))
+    end
+    local hdr_parts = {}
+    for ci, col in ipairs(cols) do
+      local pad = widths[ci] - vim.fn.strdisplaywidth(col)
+      table.insert(hdr_parts, " " .. col .. string.rep(" ", pad) .. " ")
+    end
+    local lines = {
+      "╔" .. table.concat(rule_parts, "╤") .. "╗",
+      "║" .. table.concat(hdr_parts, "│") .. "║",
+      "╠" .. table.concat(rule_parts, "╪") .. "╣",
+    }
+    for _, row in ipairs(rows) do
+      local row_parts = {}
+      for ci = 1, #cols do
+        local v = row[ci]
+        local display = v or "NULL"
+        local pad = widths[ci] - vim.fn.strdisplaywidth(display)
+        if v and tonumber(v) then
+          table.insert(row_parts, " " .. string.rep(" ", pad) .. display .. " ")
+        else
+          table.insert(row_parts, " " .. display .. string.rep(" ", pad) .. " ")
+        end
+      end
+      table.insert(lines, "║" .. table.concat(row_parts, "│") .. "║")
+    end
+    table.insert(lines, "╚" .. table.concat(rule_parts, "╧") .. "╝")
     return lines
   end
 
@@ -2403,15 +2470,7 @@ function M._setup_keymaps(bufnr)
       end
       table.insert(rows_data, row)
     end
-    local hdr = "| " .. table.concat(vim.tbl_map(function(c) return c:gsub("|", "\\|") end, cols), " | ") .. " |"
-    local sep = "| " .. table.concat(vim.tbl_map(function() return "---" end, cols), " | ") .. " |"
-    local lines_out = { hdr, sep }
-    for _, row in ipairs(rows_data) do
-      local parts = {}
-      for _, v in ipairs(row) do table.insert(parts, ((v or ""):gsub("|", "\\|"))) end
-      table.insert(lines_out, "| " .. table.concat(parts, " | ") .. " |")
-    end
-    vim.fn.setreg("+", table.concat(lines_out, "\n"))
+    vim.fn.setreg("+", table.concat(format_export(rows_data, cols, "markdown"), "\n"))
     vim.notify("Copied as Markdown table (" .. #rows_data .. " rows)", vim.log.levels.INFO)
   end, "Yank table as Markdown")
 
@@ -4396,127 +4455,13 @@ function M._setup_keymaps(bufnr)
         table.insert(rows_data, row)
       end
 
-      local output
-      if choice == "CSV" then
-        local lines_out = { table.concat(cols, ",") }
-        for _, row in ipairs(rows_data) do
-          local parts = {}
-          for ci = 1, #cols do
-            local s = row[ci] or ""
-            if s:find('[,"\n]') then s = '"' .. s:gsub('"', '""') .. '"' end
-            table.insert(parts, s)
-          end
-          table.insert(lines_out, table.concat(parts, ","))
-        end
-        output = table.concat(lines_out, "\n")
-      elseif choice == "TSV" then
-        local lines_out = { table.concat(cols, "\t") }
-        for _, row in ipairs(rows_data) do
-          local parts = {}
-          for ci = 1, #cols do table.insert(parts, row[ci] or "") end
-          table.insert(lines_out, table.concat(parts, "\t"))
-        end
-        output = table.concat(lines_out, "\n")
-      elseif choice == "JSON" then
-        local objects = {}
-        for _, row in ipairs(rows_data) do
-          local obj_parts = {}
-          for ci, col in ipairs(cols) do
-            local v = row[ci]
-            local json_val
-            if v == nil then json_val = "null"
-            elseif tonumber(v) then json_val = v
-            elseif v == "true" or v == "false" then json_val = v
-            else json_val = '"' .. v:gsub('\\', '\\\\'):gsub('"', '\\"'):gsub('\n', '\\n'):gsub('\r', '\\r'):gsub('\t', '\\t') .. '"'
-            end
-            table.insert(obj_parts, '    "' .. col .. '": ' .. json_val)
-          end
-          table.insert(objects, "  {\n" .. table.concat(obj_parts, ",\n") .. "\n  }")
-        end
-        output = "[\n" .. table.concat(objects, ",\n") .. "\n]"
-      elseif choice == "SQL INSERT" then
-        local stmts = {}
-        local tbl = st_e.table_name or "table_name"
-        for _, row in ipairs(rows_data) do
-          local vals = {}
-          -- quote_value(nil) emits unquoted NULL for NULL cells
-          for ci = 1, #cols do table.insert(vals, sql.quote_value(row[ci])) end
-          table.insert(stmts, string.format("INSERT INTO %s (%s) VALUES (%s);",
-            sql.quote_ident(tbl),
-            table.concat(vim.tbl_map(function(c) return sql.quote_ident(c) end, cols), ", "),
-            table.concat(vals, ", ")))
-        end
-        output = table.concat(stmts, "\n")
-      elseif choice == "Markdown" then
-        local hdr = "| " .. table.concat(vim.tbl_map(function(c) return c:gsub("|", "\\|") end, cols), " | ") .. " |"
-        local sep = "| " .. table.concat(vim.tbl_map(function() return "---" end, cols), " | ") .. " |"
-        local lines_out = { hdr, sep }
-        for _, row in ipairs(rows_data) do
-          local parts = {}
-          for ci = 1, #cols do
-            table.insert(parts, (tostring(row[ci] or ""):gsub("|", "\\|")))
-          end
-          table.insert(lines_out, "| " .. table.concat(parts, " | ") .. " |")
-        end
-        output = table.concat(lines_out, "\n")
-      elseif choice == "Grip Table" then
-        -- Box-drawing table matching the grid style
-        local widths = {}
-        for ci, col in ipairs(cols) do
-          widths[ci] = vim.fn.strdisplaywidth(col)
-        end
-        for _, row in ipairs(rows_data) do
-          for ci = 1, #cols do
-            widths[ci] = math.max(widths[ci], vim.fn.strdisplaywidth(tostring(row[ci] or "NULL")))
-          end
-        end
-        -- Top border: ╔════╤════╗
-        local top_parts = {}
-        for ci = 1, #cols do
-          table.insert(top_parts, string.rep("═", widths[ci] + 2))
-        end
-        local top = "╔" .. table.concat(top_parts, "╤") .. "╗"
-        -- Header: ║ col │ col ║
-        local hdr_parts = {}
-        for ci, col in ipairs(cols) do
-          local pad = widths[ci] - vim.fn.strdisplaywidth(col)
-          table.insert(hdr_parts, " " .. col .. string.rep(" ", pad) .. " ")
-        end
-        local hdr = "║" .. table.concat(hdr_parts, "│") .. "║"
-        -- Separator: ╠════╪════╣
-        local sep_parts = {}
-        for ci = 1, #cols do
-          table.insert(sep_parts, string.rep("═", widths[ci] + 2))
-        end
-        local separator = "╠" .. table.concat(sep_parts, "╪") .. "╣"
-        -- Data rows: ║ val │ val ║
-        local data_lines = {}
-        for _, row in ipairs(rows_data) do
-          local row_parts = {}
-          for ci = 1, #cols do
-            local v = row[ci]
-            local display = v or "NULL"
-            local pad = widths[ci] - vim.fn.strdisplaywidth(display)
-            -- Right-align numbers
-            if v and tonumber(v) then
-              table.insert(row_parts, " " .. string.rep(" ", pad) .. display .. " ")
-            else
-              table.insert(row_parts, " " .. display .. string.rep(" ", pad) .. " ")
-            end
-          end
-          table.insert(data_lines, "║" .. table.concat(row_parts, "│") .. "║")
-        end
-        -- Bottom border: ╚════╧════╝
-        local bot_parts = {}
-        for ci = 1, #cols do
-          table.insert(bot_parts, string.rep("═", widths[ci] + 2))
-        end
-        local bot = "╚" .. table.concat(bot_parts, "╧") .. "╝"
-        local lines_out = { top, hdr, separator }
-        for _, dl in ipairs(data_lines) do table.insert(lines_out, dl) end
-        table.insert(lines_out, bot)
-        output = table.concat(lines_out, "\n")
-      end
+      local FORMAT_IDS = {
+        ["CSV"] = "csv", ["TSV"] = "tsv", ["JSON"] = "json",
+        ["SQL INSERT"] = "sql", ["Markdown"] = "markdown", ["Grip Table"] = "grip",
+      }
+      -- Empty for a zero-row SQL INSERT export; still copied, as before.
+      local output = table.concat(
+        format_export(rows_data, cols, FORMAT_IDS[choice], st_e.table_name or "table_name"), "\n")
 
       if output then
         vim.fn.setreg("+", output)
