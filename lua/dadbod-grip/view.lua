@@ -200,11 +200,18 @@ local function pad_display(s, width, ellipsize)
   return trimmed .. string.rep(" ", math.max(0, width - dw)), dw
 end
 
+-- Returns two tables keyed by column name:
+--   widths  — display width clamped to max_width (what the grid actually renders)
+--   natural — true (unclamped) content width, used to cap slack expansion so a
+--             column is never padded wider than the data it holds
 local function calc_col_widths(columns, rows, max_width)
   local widths = {}
+  local natural = {}
   for _, col in ipairs(columns) do
     -- +3 reserves space for stacked sort indicators (e.g. " ▲1") so the col name is never truncated
-    widths[col] = math.min(vim.fn.strdisplaywidth(col) + 3, max_width)
+    local w = vim.fn.strdisplaywidth(col) + 3
+    natural[col] = w
+    widths[col] = math.min(w, max_width)
   end
   -- For large tables, sample first 100 + last 10 rows instead of scanning all
   local n = #rows
@@ -213,12 +220,38 @@ local function calc_col_widths(columns, rows, max_width)
     for i, col in ipairs(columns) do
       local v = row_data[i] or ""
       local display = (v == nil or v == "") and NULL_DISPLAY or tostring(v)
-      widths[col] = math.min(math.max(widths[col], vim.fn.strdisplaywidth(display)), max_width)
+      local dw = vim.fn.strdisplaywidth(display)
+      if dw > natural[col] then natural[col] = dw end
+      widths[col] = math.min(math.max(widths[col], dw), max_width)
     end
   end
   for ri = 1, sample_end do scan_row(rows[ri]) end
   if n > 200 then
     for ri = math.max(sample_end + 1, n - 9), n do scan_row(rows[ri]) end
+  end
+  return widths, natural
+end
+
+--- Hand leftover horizontal space to truncated columns so a narrow table fills
+--- the window — but never widen a column past its true content (`natural`),
+--- otherwise hiding columns just pads the survivors with dead space. Each column
+--- grows by at most `per_col_cap`. Layout reserves +3 per column (separators /
+--- sort markers). Mutates and returns `widths`. Pure/testable.
+function M._distribute_slack(columns, widths, natural, configured_max, available, per_col_cap)
+  local total = 0
+  for _, col in ipairs(columns) do total = total + widths[col] + 3 end
+  local slack = available - total
+  if slack <= 0 then return widths end
+  for _, col in ipairs(columns) do
+    if slack <= 0 then break end
+    if widths[col] >= configured_max then           -- column was truncated at the cap
+      local room = math.min(natural[col] - widths[col], per_col_cap)
+      if room > 0 then
+        local extra = math.min(slack, room)
+        widths[col] = widths[col] + extra
+        slack = slack - extra
+      end
+    end
   end
   return widths
 end
@@ -443,8 +476,9 @@ local function build_render(session, opts)
     table.insert(display_rows, dr)
   end
 
-  -- Auto-fit: compute natural widths first (clamped to configured max)
-  local widths = calc_col_widths(columns, display_rows, configured_max)
+  -- Auto-fit: compute natural widths first (clamped to configured max);
+  -- `natural_widths` keeps the true unclamped content width for slack capping.
+  local widths, natural_widths = calc_col_widths(columns, display_rows, configured_max)
 
   -- Apply per-column width overrides (set by = keymap)
   if session.col_width_overrides then
@@ -453,22 +487,12 @@ local function build_render(session, opts)
     end
   end
 
-  -- Smart auto-fit: if total fits, expand narrow columns proportionally
-  local available = vim.o.columns - 4  -- borders + padding
-  local total_natural = 0
-  for _, col in ipairs(columns) do total_natural = total_natural + widths[col] + 3 end
-  if #columns > 0 and total_natural < available then
-    -- Distribute extra space to columns that were truncated
-    local slack = available - total_natural
-    for _, col in ipairs(columns) do
-      if slack <= 0 then break end
-      local natural = widths[col]
-      if natural >= configured_max then
-        local extra = math.min(slack, 20)  -- max 20 extra chars per column
-        widths[col] = natural + extra
-        slack = slack - extra
-      end
-    end
+  -- Smart auto-fit: if the table is narrower than the window, hand the leftover
+  -- space to truncated columns — but never past their real content width, so
+  -- hiding columns doesn't balloon the survivors with empty padding.
+  if #columns > 0 then
+    local available = vim.o.columns - 4  -- borders + padding
+    M._distribute_slack(columns, widths, natural_widths, configured_max, available, 20)
   end
 
   -- Total visual width of content area
