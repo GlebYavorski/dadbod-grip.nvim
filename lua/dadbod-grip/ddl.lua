@@ -113,9 +113,10 @@ local function destructive_confirm(title, ddl_sql, confirm_word, callback)
   -- y: close float, then ask for typed confirmation
   vim.keymap.set("n", "y", function()
     close()
-    local CANCEL = "\0"
-    local ok, input = pcall(vim.fn.input, { prompt = 'Type "' .. confirm_word .. '" to confirm: ', cancelreturn = CANCEL })
-    if ok and input == confirm_word then
+    local input = ui.input({
+      prompt = 'Type "' .. confirm_word .. '" to confirm: ', allow_empty = true,
+    })
+    if input == confirm_word then
       callback()
     else
       vim.notify("Cancelled (input did not match)", vim.log.levels.INFO)
@@ -133,9 +134,8 @@ end
 -- ── column rename ───────────────────────────────────────────────────────────
 
 function M.rename_column(table_name, old_name, url, on_done)
-  local CANCEL = "\0"
-  local ok, new_name = pcall(vim.fn.input, { prompt = "Rename '" .. old_name .. "' to: ", cancelreturn = CANCEL })
-  if not ok or new_name == CANCEL or new_name == "" or new_name == old_name then return end
+  local new_name = ui.input({ prompt = "Rename '" .. old_name .. "' to: " })
+  if not new_name or new_name == old_name then return end
 
   local ddl_sql = string.format(
     'ALTER TABLE %s RENAME COLUMN %s TO %s',
@@ -158,9 +158,8 @@ end
 -- ── table rename ────────────────────────────────────────────────────────────
 
 function M.rename_table(old_name, url, on_done)
-  local CANCEL = "\0"
-  local ok, new_name = pcall(vim.fn.input, { prompt = "Rename table '" .. old_name .. "' to: ", cancelreturn = CANCEL })
-  if not ok or new_name == CANCEL or new_name == "" or new_name == old_name then return end
+  local new_name = ui.input({ prompt = "Rename table '" .. old_name .. "' to: " })
+  if not new_name or new_name == old_name then return end
 
   local ddl_sql = string.format(
     'ALTER TABLE %s RENAME TO %s',
@@ -182,15 +181,15 @@ end
 -- ── column add ──────────────────────────────────────────────────────────────
 
 function M.add_column(table_name, url, on_done)
-  local CANCEL = "\0"
-  local ok1, col_name = pcall(vim.fn.input, { prompt = "Column name: ", cancelreturn = CANCEL })
-  if not ok1 or col_name == CANCEL or col_name == "" then return end
+  local col_name = ui.input({ prompt = "Column name: " })
+  if not col_name then return end
 
-  local ok2, col_type = pcall(vim.fn.input, { prompt = "Column type: ", default = "text", cancelreturn = CANCEL })
-  if not ok2 or col_type == CANCEL or col_type == "" then return end
+  local col_type = ui.input({ prompt = "Column type: ", default = "text" })
+  if not col_type then return end
 
-  local ok3, default_val = pcall(vim.fn.input, { prompt = "Default value (blank for none): ", cancelreturn = CANCEL })
-  if not ok3 or default_val == CANCEL then return end
+  -- Blank is a meaningful answer here: "no default".
+  local default_val = ui.input({ prompt = "Default value (blank for none): ", allow_empty = true })
+  if not default_val then return end
 
   local parts = { "ALTER TABLE " .. sql.quote_ident(table_name) }
   local col_def = "ADD COLUMN " .. sql.quote_ident(col_name) .. " " .. col_type
@@ -306,18 +305,19 @@ local function build_create_sql(table_name, columns, url, on_done)
 end
 
 function M.create_table(url, on_done)
-  local CANCEL = "\0"
-  local ok, table_name = pcall(vim.fn.input, { prompt = "Table name: ", cancelreturn = CANCEL })
-  if not ok or table_name == CANCEL or table_name == "" then return end
+  local table_name = ui.input({ prompt = "Table name: " })
+  if not table_name then return end
 
   -- Collect columns interactively via a while loop (replaces recursive async pattern)
   local columns = {}
   while true do
-    local ok2, col_name = pcall(vim.fn.input, { prompt = "Column name (blank to finish): ", cancelreturn = CANCEL })
-    if not ok2 or col_name == CANCEL or col_name == "" then break end
+    local col_name = ui.input({ prompt = "Column name (blank to finish): " })
+    if not col_name then break end
 
-    local ok3, col_type = pcall(vim.fn.input, { prompt = "Type for " .. col_name .. ": ", default = "text", cancelreturn = CANCEL })
-    if not ok3 or col_type == CANCEL then break end
+    local col_type = ui.input({
+      prompt = "Type for " .. col_name .. ": ", default = "text", allow_empty = true,
+    })
+    if not col_type then break end
     if col_type == "" then col_type = "text" end
 
     local is_pk = #columns == 0  -- first column defaults to PK

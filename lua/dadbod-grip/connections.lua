@@ -665,14 +665,13 @@ end
 
 --- Prompt user to enter a new connection URL + name, then switch to it.
 local function prompt_new_connection()
-  local CANCEL = "\0"
-  local ok, url = pcall(vim.fn.input, { prompt = "Connection URL, file path, or s3://: ", cancelreturn = CANCEL })
-  if not ok or url == CANCEL or url == "" then
+  local url = ui.input({ prompt = "Connection URL, file path, or s3://: " })
+  if not url then
     require("dadbod-grip").open_welcome(); return
   end
 
-  local ok2, name = pcall(vim.fn.input, { prompt = "Connection name: ", cancelreturn = CANCEL })
-  if not ok2 or name == CANCEL or name == "" then
+  local name = ui.input({ prompt = "Connection name: " })
+  if not name then
     require("dadbod-grip").open_welcome(); return
   end
 
@@ -683,9 +682,8 @@ end
 --- Connect once without saving to connections.json.
 --- Passes nil name so M.switch() skips the auto-persist path.
 local function prompt_temp_connection()
-  local CANCEL = "\0"
-  local ok, url = pcall(vim.fn.input, { prompt = "Connect once (URL, not saved): ", cancelreturn = CANCEL })
-  if not ok or url == CANCEL or url == "" then
+  local url = ui.input({ prompt = "Connect once (URL, not saved): " })
+  if not url then
     require("dadbod-grip").open_welcome(); return
   end
   -- nil name → M.switch() won't auto-persist (see "if not already_saved and name" guard)
@@ -841,11 +839,9 @@ function M.pick(opts)
     end,
     on_delete = function(c, refresh_fn)
       if c._new or c._temp or c._section_header or c._local_file then return end
-      local CANCEL = "\0"
       -- Starter built-in: write a hidden flag so it never appears again
       if c._builtin_id then
-        local ok, ans = pcall(vim.fn.input, { prompt = "Remove '" .. c.name .. "'? (y/N): ", cancelreturn = CANCEL })
-        if ok and (ans == "y" or ans == "yes") then
+        if ui.confirm("Remove '" .. c.name .. "'? (y/N): ") then
           vim.fn.mkdir(vim.fn.stdpath("data") .. "/grip", "p")
           vim.fn.writefile({}, vim.fn.stdpath("data") .. "/grip/" .. c._builtin_id .. ".hidden")
           refresh_fn(build_picker_items())
@@ -854,16 +850,14 @@ function M.pick(opts)
       end
       -- Portal deletion: write a flag file so it never appears again
       if c._is_demo then
-        local ok, ans = pcall(vim.fn.input, { prompt = "Remove Softrear Portal? (y/N): ", cancelreturn = CANCEL })
-        if ok and (ans == "y" or ans == "yes") then
+        if ui.confirm("Remove Softrear Portal? (y/N): ") then
           vim.fn.mkdir(vim.fn.stdpath("data") .. "/grip", "p")
           vim.fn.writefile({}, vim.fn.stdpath("data") .. "/grip/softrear.hidden")
           refresh_fn(build_picker_items())
         end
         return
       end
-      local ok, ans = pcall(vim.fn.input, { prompt = "Remove '" .. c.name .. "'? (y/N): ", cancelreturn = CANCEL })
-      if ok and (ans == "y" or ans == "yes") then
+      if ui.confirm("Remove '" .. c.name .. "'? (y/N): ") then
         M.remove(c.name)
         refresh_fn(build_picker_items())
       end
@@ -929,14 +923,9 @@ function M.pick(opts)
               vim.log.levels.WARN)
             return
           end
-          local CANCEL = "\0"
           local default_alias = c.name:lower():gsub("[^%w_]", "_"):gsub("_+", "_"):gsub("^_", ""):gsub("_$", "")
-          local ok, alias = pcall(vim.fn.input, {
-            prompt = "Attach as alias: ",
-            default = default_alias,
-            cancelreturn = CANCEL,
-          })
-          if not ok or alias == CANCEL or alias == "" then return end
+          local alias = ui.input({ prompt = "Attach as alias: ", default = default_alias })
+          if not alias then return end
           local duckdb_adapter = require("dadbod-grip.adapters.duckdb")
           local schema_mod = require("dadbod-grip.schema")
           local url = vim.g.db
@@ -1010,12 +999,9 @@ function M.pick(opts)
         when           = function(c) return c._local_file == true end,
         fn             = function(c)
           if not c._local_file then return end
-          local CANCEL = "\0"
           local default_name = vim.fn.fnamemodify(c.url, ":t:r")
-          local ok, name = pcall(vim.fn.input, {
-            prompt = "Save as: ", default = default_name, cancelreturn = CANCEL,
-          })
-          if not ok or name == CANCEL or name == "" then return end
+          local name = ui.input({ prompt = "Save as: ", default = default_name })
+          if not name then return end
           M.switch(c.url, name, "file")
         end,
       },

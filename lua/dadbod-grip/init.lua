@@ -191,12 +191,7 @@ local function do_apply_file_writeback(bufnr, session)
 
   -- Destructive-action confirm
   local short = vim.fn.fnamemodify(file_path, ":t")
-  local CANCEL = "\0"
-  local ok, ans = pcall(vim.fn.input, {
-    prompt = "Overwrite " .. short .. " (" .. total .. " change(s))? (y/N): ",
-    cancelreturn = CANCEL,
-  })
-  if not ok or ans == CANCEL or (ans ~= "y" and ans ~= "yes") then
+  if not ui.confirm("Overwrite " .. short .. " (" .. total .. " change(s))? (y/N): ") then
     vim.notify("Write-back cancelled", vim.log.levels.INFO)
     return
   end
@@ -2245,12 +2240,11 @@ function M.setup(opts)
       alias = args[#args]
       dsn = table.concat(args, " ", 1, #args - 1)
     else
-      local CANCEL = "\0"
-      local ok_d, d = pcall(vim.fn.input, { prompt = "Connection (e.g. postgres:dbname=mydb user=me): ", cancelreturn = CANCEL })
-      if not ok_d or d == CANCEL or d == "" then return end
+      local d = ui.input({ prompt = "Connection (e.g. postgres:dbname=mydb user=me): " })
+      if not d then return end
       dsn = d
-      local ok_a, a = pcall(vim.fn.input, { prompt = "Alias (used in queries, e.g. pg): ", cancelreturn = CANCEL })
-      if not ok_a or a == CANCEL or a == "" then return end
+      local a = ui.input({ prompt = "Alias (used in queries, e.g. pg): " })
+      if not a then return end
       alias = a
     end
 
@@ -2291,14 +2285,10 @@ function M.setup(opts)
         vim.notify("GripDetach: no databases attached.", vim.log.levels.INFO)
         return
       end
-      local CANCEL = "\0"
       local names = {}
       for _, a in ipairs(atts) do table.insert(names, a.alias) end
-      local ok, val = pcall(vim.fn.input, {
-        prompt = "Detach alias (" .. table.concat(names, ", ") .. "): ",
-        cancelreturn = CANCEL,
-      })
-      if not ok or val == CANCEL or val == "" then return end
+      local val = ui.input({ prompt = "Detach alias (" .. table.concat(names, ", ") .. "): " })
+      if not val then return end
       alias = val
     end
 

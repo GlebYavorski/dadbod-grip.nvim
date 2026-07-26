@@ -547,9 +547,8 @@ function M.ask(url)
   local existing_sql = query_pad.get_content()
   local caller_win = vim.api.nvim_get_current_win()  -- capture before async
 
-  local CANCEL = "\0"
-  local ok, question = pcall(vim.fn.input, { prompt = "Ask about your data: ", cancelreturn = CANCEL })
-  if not ok or question == CANCEL or question == "" then return end
+  local question = ui.input({ prompt = "Ask about your data: " })
+  if not question then return end
   ui.blocking("Generating SQL...", function()
     local done = false
     local result_sql, gen_err

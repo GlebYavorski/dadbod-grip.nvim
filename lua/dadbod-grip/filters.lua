@@ -2,6 +2,8 @@
 -- Stored in .grip/filters.json keyed by table name.
 -- Picker uses grip_picker (zero external deps).
 
+local ui = require("dadbod-grip.ui")
+
 local M = {}
 
 -- ── storage helpers ─────────────────────────────────────────────────────
@@ -123,9 +125,7 @@ function M.pick(table_name, callback)
       callback(p)
     end,
     on_delete = function(p, refresh_fn)
-      local CANCEL = "\0"
-      local ok, ans = pcall(vim.fn.input, { prompt = "Delete preset '" .. p.name .. "'? (y/N): ", cancelreturn = CANCEL })
-      if ok and (ans == "y" or ans == "yes") then
+      if ui.confirm("Delete preset '" .. p.name .. "'? (y/N): ") then
         M.delete(table_name, p.name)
         refresh_fn(M.list(table_name))
       end

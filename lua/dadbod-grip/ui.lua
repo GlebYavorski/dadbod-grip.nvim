@@ -9,6 +9,39 @@ function M.border()
   return require("dadbod-grip").get_opts().border
 end
 
+--- Prompt on the cmdline; return nil when the user cancels.
+---
+--- vim.fn.input() signals a cancel two ways: <Esc> returns `cancelreturn`, while
+--- <C-c> raises. Both mean nil here. An empty answer counts as a cancel too
+--- unless `allow_empty` is set — which is what almost every prompt here wants.
+---
+--- vim.fn.input() and not vim.ui.input() on purpose: it always uses the native
+--- cmdline, so it is never intercepted by dressing.nvim/noice floats.
+---
+--- @param opts table   prompt, default?, completion?, allow_empty?
+--- @return string|nil  the answer, or nil if cancelled
+function M.input(opts)
+  local CANCEL = "\0"
+  local ok, answer = pcall(vim.fn.input, {
+    prompt       = opts.prompt,
+    default      = opts.default,
+    completion   = opts.completion,
+    cancelreturn = CANCEL,
+  })
+  if not ok or answer == CANCEL then return nil end
+  if answer == "" and not opts.allow_empty then return nil end
+  return answer
+end
+
+--- Ask a yes/no question. Only a literal "y"/"yes" is a yes; anything else —
+--- including an empty answer or a cancel — is a no.
+--- @param prompt string  spell out the default, e.g. "Drop table? (y/N): "
+--- @return boolean
+function M.confirm(prompt)
+  local answer = M.input({ prompt = prompt, allow_empty = true })
+  return answer == "y" or answer == "yes"
+end
+
 --- Open an editor-relative float and return its window and buffer.
 ---
 --- Covers only what the info floats across the plugin share: a scratch buffer,

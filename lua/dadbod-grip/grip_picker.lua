@@ -390,12 +390,11 @@ function M.open(opts)
   end
 
   -- Filter (/ or gp)
-  -- vim.fn.input() always uses native cmdline: never intercepted by dressing/noice
   local function activate_filter()
     local prompt = filter ~= "" and ("Filter [" .. filter .. "]: ") or "Filter: "
-    local CANCEL = "\0"
-    local ok, input = pcall(vim.fn.input, { prompt = prompt, default = filter, cancelreturn = CANCEL })
-    if not ok or input == CANCEL then return end  -- Ctrl-C or Esc = no change
+    -- Blank clears the filter, so only Ctrl-C / Esc mean "no change".
+    local input = ui.input({ prompt = prompt, default = filter, allow_empty = true })
+    if not input then return end
     filter = input
     cursor = 1
     if vim.api.nvim_win_is_valid(win) then

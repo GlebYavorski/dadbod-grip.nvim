@@ -52,6 +52,77 @@ test("blocking: nil return values handled", function()
   eq(b, nil, "second nil")
 end)
 
+-- ── input / confirm ─────────────────────────────────────────────────────────
+
+--- Answer the next prompt with `keys`, then run fn().
+local function answering(keys, fn)
+  vim.api.nvim_feedkeys(
+    vim.api.nvim_replace_termcodes(keys, true, false, true), "L", false)
+  return fn()
+end
+
+test("input: returns the typed answer", function()
+  eq(answering("hello<CR>", function() return ui.input({ prompt = "P: " }) end),
+    "hello", "answer")
+end)
+
+test("input: an empty answer is a cancel by default", function()
+  eq(answering("<CR>", function() return ui.input({ prompt = "P: " }) end),
+    nil, "empty -> nil")
+end)
+
+test("input: allow_empty keeps an empty answer", function()
+  eq(answering("<CR>", function()
+    return ui.input({ prompt = "P: ", allow_empty = true })
+  end), "", "empty -> empty string")
+end)
+
+test("input: <Esc> cancels even with allow_empty", function()
+  eq(answering("<Esc>", function() return ui.input({ prompt = "P: " }) end),
+    nil, "esc -> nil")
+  eq(answering("<Esc>", function()
+    return ui.input({ prompt = "P: ", allow_empty = true })
+  end), nil, "esc -> nil with allow_empty")
+end)
+
+test("input: default is prefilled and editable", function()
+  eq(answering("<CR>", function()
+    return ui.input({ prompt = "P: ", default = "dflt" })
+  end), "dflt", "default accepted as-is")
+  eq(answering("!<CR>", function()
+    return ui.input({ prompt = "P: ", default = "dflt" })
+  end), "dflt!", "default can be appended to")
+end)
+
+test("input: never propagates the <C-c> error", function()
+  local real = vim.fn.input
+  vim.fn.input = function() error("Keyboard interrupt") end
+  local ok, res = pcall(ui.input, { prompt = "P: " })
+  vim.fn.input = real
+  eq(ok, true, "no error escapes")
+  eq(res, nil, "interrupt -> nil")
+end)
+
+test("confirm: only y/yes is a yes", function()
+  for _, answer in ipairs({ "y", "yes" }) do
+    eq(answering(answer .. "<CR>", function()
+      return ui.confirm("Q? (y/N): ")
+    end), true, answer .. " -> true")
+  end
+  for _, answer in ipairs({ "n", "no", "Y", "YES", "maybe" }) do
+    eq(answering(answer .. "<CR>", function()
+      return ui.confirm("Q? (y/N): ")
+    end), false, answer .. " -> false")
+  end
+end)
+
+test("confirm: empty answer and cancel are both a no", function()
+  eq(answering("<CR>", function() return ui.confirm("Q? (y/N): ") end),
+    false, "empty -> false")
+  eq(answering("<Esc>", function() return ui.confirm("Q? (y/N): ") end),
+    false, "esc -> false")
+end)
+
 -- ── info_float ──────────────────────────────────────────────────────────────
 
 vim.o.lines   = 40

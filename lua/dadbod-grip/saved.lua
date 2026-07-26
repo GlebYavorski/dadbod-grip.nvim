@@ -1,6 +1,8 @@
 -- saved.lua: save/load SQL queries in .grip/queries/.
 -- Project-local storage; uses grip_picker (zero external deps).
 
+local ui = require("dadbod-grip.ui")
+
 local M = {}
 
 --- Find project root by walking up from cwd for .git or .grip.
@@ -60,9 +62,8 @@ function M.save_prompt(bufnr)
     return
   end
   vim.schedule(function()
-    local CANCEL = "\0"
-    local ok, name = pcall(vim.fn.input, { prompt = "Save query as: ", cancelreturn = CANCEL })
-    if not ok or name == CANCEL or name == "" then return end
+    local name = ui.input({ prompt = "Save query as: " })
+    if not name then return end
     -- Prefer buffer-local db (set by DBUI), then global
     local url = vim.b[bufnr].db or vim.g.db or ""
     M.save(name, content, url)
@@ -148,9 +149,7 @@ function M.pick(callback)
       callback(content, q.name)
     end,
     on_delete = function(q, refresh_fn)
-      local CANCEL = "\0"
-      local ok, ans = pcall(vim.fn.input, { prompt = "Delete '" .. q.name .. "'? (y/N): ", cancelreturn = CANCEL })
-      if ok and (ans == "y" or ans == "yes") then
+      if ui.confirm("Delete '" .. q.name .. "'? (y/N): ") then
         M.delete(q.name)
         refresh_fn(M.list())
       end

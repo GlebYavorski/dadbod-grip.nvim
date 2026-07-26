@@ -1531,13 +1531,9 @@ function M.do_export(bufnr)
     return
   end
 
-  local CANCEL = "\0"
   -- Prompt format
-  local ok_fmt, fmt = pcall(vim.fn.input, {
-    prompt = "Export format [csv/json/sql]: ",
-    cancelreturn = CANCEL,
-  })
-  if not ok_fmt or fmt == CANCEL or fmt == "" then return end
+  local fmt = ui.input({ prompt = "Export format [csv/json/sql]: " })
+  if not fmt then return end
   fmt = fmt:lower()
   if fmt ~= "csv" and fmt ~= "json" and fmt ~= "sql" then
     vim.notify("Unknown format: " .. fmt .. " (use csv, json, or sql)", vim.log.levels.ERROR)
@@ -1546,13 +1542,12 @@ function M.do_export(bufnr)
 
   local ext = fmt == "sql" and "sql" or fmt
   local default_path = vim.fn.getcwd() .. "/grip_export." .. ext
-  local ok_path, path = pcall(vim.fn.input, {
+  local path = ui.input({
     prompt = "Save to: ",
     default = default_path,
-    cancelreturn = CANCEL,
     completion = "file",
   })
-  if not ok_path or path == CANCEL or path == "" then return end
+  if not path then return end
 
   local table_name = s.query_spec and s.query_spec.table_name
   local lines = format_export(rows, cols, fmt, table_name)
@@ -3936,9 +3931,8 @@ function M._setup_keymaps(bufnr)
     local session_f = M._sessions[bufnr]
     if not session_f or not session_f.query_spec then return end
     if not confirm_discard_changes("Filter") then return end
-    local CANCEL = "\0"
-    local ok, input = pcall(vim.fn.input, { prompt = "WHERE clause (e.g. status='x' AND amount>0): ", cancelreturn = CANCEL })
-    if not ok or input == CANCEL or input == "" then return end
+    local input = ui.input({ prompt = "WHERE clause (e.g. status='x' AND amount>0): " })
+    if not input then return end
     local new_spec = qmod.add_filter(session_f.query_spec, input)
     if session_f.on_requery then session_f.on_requery(bufnr, new_spec) end
   end, "Filter rows (WHERE clause)")
@@ -4013,12 +4007,10 @@ function M._setup_keymaps(bufnr)
 
     if not confirm_discard_changes("Filter") then return end
 
-    local CANCEL = "\0"
-    local ok, op = pcall(vim.fn.input, {
+    local op = ui.input({
       prompt = "Filter " .. col_name .. " [=, !=, >, <, LIKE, IN, BETWEEN, NULL, NOT NULL]: ",
-      cancelreturn = CANCEL,
     })
-    if not ok or op == CANCEL or op == "" then return end
+    if not op then return end
     op = op:upper():match("^%s*(.-)%s*$")  -- trim + uppercase
 
     local value
@@ -4027,8 +4019,9 @@ function M._setup_keymaps(bufnr)
         or op == "IN" and "Values (comma-separated, e.g. 1,2,3 or alice,bob): "
         or op == "BETWEEN" and "Range (low,high, e.g. 10,100 or 2024-01-01,2024-12-31): "
         or "Value: "
-      local ok2, val = pcall(vim.fn.input, { prompt = value_prompt, cancelreturn = CANCEL })
-      if not ok2 or val == CANCEL then return end
+      -- Empty is a legal filter value (e.g. `= ''`), so it is not a cancel.
+      local val = ui.input({ prompt = value_prompt, allow_empty = true })
+      if not val then return end
       value = val
     end
 
@@ -4091,9 +4084,8 @@ function M._setup_keymaps(bufnr)
       table.insert(clauses, "(" .. f.clause .. ")")
     end
     local combined = table.concat(clauses, " AND ")
-    local CANCEL = "\0"
-    local ok, name = pcall(vim.fn.input, { prompt = "Save filter as: ", cancelreturn = CANCEL })
-    if not ok or name == CANCEL or name == "" then return end
+    local name = ui.input({ prompt = "Save filter as: " })
+    if not name then return end
     local filters = require("dadbod-grip.filters")
     filters.save(tbl, name, combined)
   end, "Save filter as preset")
@@ -4881,12 +4873,10 @@ function M._setup_keymaps(bufnr)
     else
       -- Turning ON: destructive-action confirm
       local short = vim.fn.fnamemodify(file_path, ":t")
-      local CANCEL = "\0"
-      local ok, ans = pcall(vim.fn.input, {
-        prompt = "Enable write mode for " .. short .. "? Applying edits will overwrite the file. (y/N): ",
-        cancelreturn = CANCEL,
-      })
-      if not ok or ans == CANCEL or (ans ~= "y" and ans ~= "yes") then return end
+      if not ui.confirm("Enable write mode for " .. short
+        .. "? Applying edits will overwrite the file. (y/N): ") then
+        return
+      end
       session.write_mode = true
       _update_badge(bufnr)
       vim.notify("Write mode on: edits will overwrite " .. short, vim.log.levels.INFO)
@@ -4992,9 +4982,8 @@ function M._setup_keymaps(bufnr)
   end, "AI SQL generation")
 
   kmap("grid_fill", function()
-    local CANCEL = "\0"
-    local ok, input = pcall(vim.fn.input, { prompt = "Rows to generate: ", default = "1", cancelreturn = CANCEL })
-    if not ok or input == CANCEL or input == "" then return end
+    local input = ui.input({ prompt = "Rows to generate: ", default = "1" })
+    if not input then return end
     local n = tonumber(input)
     if not n or n < 1 then
       vim.notify("Enter a number >= 1", vim.log.levels.INFO)

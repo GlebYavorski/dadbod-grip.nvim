@@ -605,7 +605,6 @@ function M.show(url, scroll_to, opts)
   end)
 
   -- f: follow FK, jump to the referenced table in the tree, push history
-  local CANCEL = "\0"
   map("f", function()
     local cur_row = vim.api.nvim_win_get_cursor(0)[1]
     local node    = line_to_node[cur_row]
@@ -634,11 +633,10 @@ function M.show(url, scroll_to, opts)
       for i, t in ipairs(targets) do
         opts[i] = i .. ": " .. t.col .. " → " .. t.ref
       end
-      local ok_r, choice = pcall(vim.fn.input, {
-        prompt      = table.concat(opts, "   ") .. "\nFollow FK [#]: ",
-        cancelreturn = CANCEL,
+      local choice = ui.input({
+        prompt = table.concat(opts, "   ") .. "\nFollow FK [#]: ",
       })
-      if not ok_r or choice == CANCEL or choice == "" then return end
+      if not choice then return end
       local idx = tonumber(choice)
       if idx and targets[idx] then target = targets[idx].ref end
     end

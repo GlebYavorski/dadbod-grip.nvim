@@ -741,11 +741,12 @@ local function setup_keymaps(url)
     render(state)
   end)
 
-  -- Filter/search: vim.fn.input() avoids dressing/noice float interception
+  -- Filter/search: blank clears the filter, so an empty answer is not a cancel.
   kmap("sidebar_filter", function()
-    local CANCEL = "\0"
-    local ok, input = pcall(vim.fn.input, { prompt = "Filter: ", default = state.filter or "", cancelreturn = CANCEL })
-    if not ok or input == CANCEL then return end
+    local input = ui.input({
+      prompt = "Filter: ", default = state.filter or "", allow_empty = true,
+    })
+    if not input then return end
     state.filter = (input ~= "") and input or nil
     render(state)
     if state.filter then
