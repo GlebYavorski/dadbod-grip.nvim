@@ -1075,6 +1075,23 @@ function M._reveal_leftcol(leftcol, textwidth, start_vcol, finish_vcol)
   return target
 end
 
+--- Map a cell's last byte to the START byte of the character it belongs to — the
+--- furthest position a normal-mode cursor can actually reach in that cell. Cells
+--- rendered with a trailing multibyte glyph (the … truncation marker or ·NULL·)
+--- have bp.finish pointing mid-character; the cursor snaps to the glyph's start,
+--- so `e` (grid_col_end) must compare against this instead of bp.finish or it
+--- gets stuck re-seeking the same spot. `finish` is a 0-based byte offset.
+--- Pure/testable.
+function M._cell_end_byte(line, finish)
+  local i = finish
+  local b = line:byte(i + 1)
+  while i > 0 and b and b >= 0x80 and b < 0xC0 do  -- UTF-8 continuation byte (10xxxxxx)
+    i = i - 1
+    b = line:byte(i + 1)
+  end
+  return i
+end
+
 --- After the cursor has been placed on a column at byte span `bp` on line `lnum`,
 --- scroll the window horizontally (if needed) so the column's right edge is
 --- visible. Converts the byte span to display columns — grid lines contain
@@ -3191,7 +3208,14 @@ function M._setup_keymaps(bufnr)
     local bp = ref_bp[target_col]
     if not bp then return end
     local win = vim.api.nvim_get_current_win()
-    vim.api.nvim_win_set_cursor(win, { cursor[1], use_finish and bp.finish or bp.start })
+    local target_byte = bp.start
+    if use_finish then
+      -- Land on the start of the cell's last character, not bp.finish, which can
+      -- point mid-glyph (… / ·NULL·) where the cursor cannot rest.
+      local line = vim.api.nvim_buf_get_lines(bufnr_l, cursor[1] - 1, cursor[1], false)[1] or ""
+      target_byte = M._cell_end_byte(line, bp.finish)
+    end
+    vim.api.nvim_win_set_cursor(win, { cursor[1], target_byte })
     -- Reveal the target column's right edge when it runs off-screen (wide columns).
     reveal_col_edge(win, bufnr_l, cursor[1], bp)
   end
@@ -3600,8 +3624,14 @@ function M._setup_keymaps(bufnr)
     end
     local current_col = cols[current_idx]
     local bp = ref_bp[current_col]
-    if bp and cursor[2] < bp.finish then
-      vim.api.nvim_win_set_cursor(0, { cursor[1], bp.finish })
+    if not bp then nav_col(bufnr, 1, true); return end
+    -- Use the start byte of the cell's last character: bp.finish can point
+    -- mid-glyph (… / ·NULL·) where the normal-mode cursor can never rest, which
+    -- would wedge `e` in place. When already at that end, advance to next column.
+    local line = vim.api.nvim_buf_get_lines(bufnr, cursor[1] - 1, cursor[1], false)[1] or ""
+    local end_col = M._cell_end_byte(line, bp.finish)
+    if cursor[2] < end_col then
+      vim.api.nvim_win_set_cursor(0, { cursor[1], end_col })
     else
       nav_col(bufnr, 1, true)
     end
