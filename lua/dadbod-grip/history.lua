@@ -1,32 +1,20 @@
 -- history.lua -- query history with JSONL storage.
 -- Stores in .grip/history.jsonl. Picker uses grip_picker (zero external deps).
 
+local paths = require("dadbod-grip.paths")
+
 local M = {}
 
 local MAX_ENTRIES = 500
 
 -- ── storage helpers ─────────────────────────────────────────────────────
 
-local function project_root()
-  local dir = vim.fn.getcwd()
-  while dir ~= "/" do
-    if vim.fn.isdirectory(dir .. "/.git") == 1 or vim.fn.isdirectory(dir .. "/.grip") == 1 then
-      return dir
-    end
-    dir = vim.fn.fnamemodify(dir, ":h")
-  end
-  return vim.fn.getcwd()
-end
-
 local function history_path()
-  return project_root() .. "/.grip/history.jsonl"
+  return paths.grip_dir() .. "/history.jsonl"
 end
 
 local function ensure_dir()
-  local dir = project_root() .. "/.grip"
-  if vim.fn.isdirectory(dir) == 0 then
-    vim.fn.mkdir(dir, "p")
-  end
+  paths.ensure_dir(paths.grip_dir())
 end
 
 --- Redact password from connection URL. Mockable via M._redact_url.

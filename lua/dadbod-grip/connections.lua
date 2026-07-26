@@ -2,6 +2,8 @@
 -- Reads from .grip/connections.json, g:dbs (DBUI compat), $DATABASE_URL.
 -- All functions return (result, err). Never throw.
 
+local paths = require("dadbod-grip.paths")
+
 local M = {}
 
 -- Session-scoped connection health state (never persisted).
@@ -15,22 +17,7 @@ local function health_char(url)
   return " "
 end
 
---- Find project root by walking up from cwd looking for .git or .grip.
-local function project_root()
-  local dir = vim.fn.getcwd()
-  while dir ~= "/" do
-    if vim.fn.isdirectory(dir .. "/.git") == 1 or vim.fn.isdirectory(dir .. "/.grip") == 1 then
-      return dir
-    end
-    dir = vim.fn.fnamemodify(dir, ":h")
-  end
-  return vim.fn.getcwd()
-end
-
-local function grip_dir()
-  local root = project_root()
-  return root .. "/.grip"
-end
+local grip_dir = paths.grip_dir
 
 local function configured_connections_path()
   local opts = require("dadbod-grip").get_opts()
@@ -48,17 +35,11 @@ end
 
 local function ensure_grip_dir()
   local custom = configured_connections_path()
-  local dir = custom and vim.fn.fnamemodify(custom, ":h") or grip_dir()
-  if vim.fn.isdirectory(dir) == 0 then
-    vim.fn.mkdir(dir, "p")
-  end
+  paths.ensure_dir(custom and vim.fn.fnamemodify(custom, ":h") or grip_dir())
 end
 
 local function ensure_global_grip_dir()
-  local dir = vim.fn.expand("~") .. "/.grip"
-  if vim.fn.isdirectory(dir) == 0 then
-    vim.fn.mkdir(dir, "p")
-  end
+  paths.ensure_dir(vim.fn.expand("~") .. "/.grip")
 end
 
 --- Detect if a URL or path points to a file DuckDB can query directly.

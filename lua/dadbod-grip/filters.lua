@@ -2,32 +2,19 @@
 -- Stored in .grip/filters.json keyed by table name.
 -- Picker uses grip_picker (zero external deps).
 
-local ui = require("dadbod-grip.ui")
+local ui    = require("dadbod-grip.ui")
+local paths = require("dadbod-grip.paths")
 
 local M = {}
 
 -- ── storage helpers ─────────────────────────────────────────────────────
 
-local function project_root()
-  local dir = vim.fn.getcwd()
-  while dir ~= "/" do
-    if vim.fn.isdirectory(dir .. "/.git") == 1 or vim.fn.isdirectory(dir .. "/.grip") == 1 then
-      return dir
-    end
-    dir = vim.fn.fnamemodify(dir, ":h")
-  end
-  return vim.fn.getcwd()
-end
-
 local function filters_path()
-  return project_root() .. "/.grip/filters.json"
+  return paths.grip_dir() .. "/filters.json"
 end
 
 local function ensure_dir()
-  local dir = project_root() .. "/.grip"
-  if vim.fn.isdirectory(dir) == 0 then
-    vim.fn.mkdir(dir, "p")
-  end
+  paths.ensure_dir(paths.grip_dir())
 end
 
 --- Read all filter presets from disk. Mockable via M._read_all.

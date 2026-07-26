@@ -1,31 +1,17 @@
 -- saved.lua: save/load SQL queries in .grip/queries/.
 -- Project-local storage; uses grip_picker (zero external deps).
 
-local ui = require("dadbod-grip.ui")
+local ui    = require("dadbod-grip.ui")
+local paths = require("dadbod-grip.paths")
 
 local M = {}
 
---- Find project root by walking up from cwd for .git or .grip.
-local function project_root()
-  local dir = vim.fn.getcwd()
-  while dir ~= "/" do
-    if vim.fn.isdirectory(dir .. "/.git") == 1 or vim.fn.isdirectory(dir .. "/.grip") == 1 then
-      return dir
-    end
-    dir = vim.fn.fnamemodify(dir, ":h")
-  end
-  return vim.fn.getcwd()
-end
-
 local function queries_dir()
-  return project_root() .. "/.grip/queries"
+  return paths.grip_dir() .. "/queries"
 end
 
 local function ensure_dir()
-  local dir = queries_dir()
-  if vim.fn.isdirectory(dir) == 0 then
-    vim.fn.mkdir(dir, "p")
-  end
+  paths.ensure_dir(queries_dir())
 end
 
 --- Sanitize name for filename (alphanumeric, hyphens, underscores).
