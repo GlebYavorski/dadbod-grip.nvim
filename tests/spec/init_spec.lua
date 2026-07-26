@@ -1,4 +1,5 @@
--- init_spec.lua: unit tests for resolve_query routing and is_queryable_file
+-- init_spec.lua: unit tests for resolve_query routing, is_queryable_file and
+-- the welcome screen (open_welcome)
 local grip = require("dadbod-grip")
 
 local pass = 0
@@ -304,6 +305,93 @@ test("resolve_query: URL does not call filereadable", function()
   vim.fn.filereadable = orig
   assert(spec, "spec should not be nil")
   eq(called, false, "filereadable should not be called for URLs")
+end)
+
+-- ── open_welcome: extmark highlights ─────────────────────────────────────────
+-- open_welcome() applies its syntax highlights inside vim.schedule (so they
+-- survive the FileType autocmd -- see init.lua), and headless tests have no
+-- UI loop driving that callback on their own. Rather than exporting a
+-- renderer to call directly, these drive vim.schedule for real and vim.wait
+-- on the extmarks actually showing up: that exercises the exact scheduled
+-- path :Grip and :GripHome run, not a reimplementation of it.
+
+local WELCOME_NS = vim.api.nvim_create_namespace("grip_welcome")
+
+--- Open the welcome screen for real and wait (bounded, on the actual
+--- condition -- not a fixed sleep) for its scheduled highlight pass to run.
+--- @return integer buf, table marks  (nvim_buf_get_extmarks with details)
+local function open_welcome_and_wait()
+  grip.open_welcome()
+  local buf = vim.api.nvim_get_current_buf()
+  local marks
+  local ok = vim.wait(1000, function()
+    marks = vim.api.nvim_buf_get_extmarks(buf, WELCOME_NS, 0, -1, { details = true })
+    return #marks > 0
+  end, 10)
+  assert(ok, "welcome highlight scheduling did not fire within 1s")
+  return buf, marks
+end
+
+test("open_welcome: highlights every logo/legend/keymap region once scheduled", function()
+  local buf, marks = open_welcome_and_wait()
+  local by_group = {}
+  for _, m in ipairs(marks) do
+    local g = m[4].hl_group
+    by_group[g] = (by_group[g] or 0) + 1
+  end
+  eq(#marks, 62, "total extmarks")
+  eq(by_group.Comment, 9, "section headers + tagline")
+  eq(by_group.Special, 3, "logo box lines (╔ ║ ╚)")
+  eq(by_group.Title, 1, "dadbod-grip title")
+  eq(by_group.Statement, 4, ":Grip command examples")
+  eq(by_group.Identifier, 42, "keymap columns + --flags")
+  eq(by_group.GripModified, 1, "legend: modified")
+  eq(by_group.GripInserted, 1, "legend: inserted")
+  eq(by_group.GripDeleted, 1, "legend: deleted")
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+end)
+
+test("open_welcome: title and legend marks carry the right range and priority", function()
+  local buf, marks = open_welcome_and_wait()
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+
+  local function find(hl_group)
+    for _, m in ipairs(marks) do
+      if m[4].hl_group == hl_group then return m end
+    end
+  end
+
+  -- Title: "dadbod-grip" through end-of-line on the logo row, at the default
+  -- extmark priority (nothing overrides it -- see hl_range() in init.lua).
+  -- The line contains the version string, so its length isn't hardcoded here:
+  -- it's read back from the buffer, the same way hl_range() computed it.
+  local title = find("Title")
+  assert(title, "Title mark exists")
+  local title_line = lines[title[2] + 1]
+  local vs = title_line:find("dadbod-grip", 1, true)
+  assert(vs, "title line contains the plugin name")
+  eq(title[3], vs - 1, "title starts where the name does")
+  eq(title[4].end_col, #title_line, "title runs to end of line")
+  eq(title[4].priority, 4096, "default extmark priority")
+
+  -- Legend phrases sit at explicit priority 200 so they win over syntax
+  -- highlighting on the same line (see hl_phrase() in init.lua).
+  for _, spec in ipairs({
+    { group = "GripModified", phrase = "violet = modified" },
+    { group = "GripInserted", phrase = "green = inserted" },
+    { group = "GripDeleted",  phrase = "red = deleted" },
+  }) do
+    local m = find(spec.group)
+    assert(m, spec.group .. " mark exists")
+    local legend_line = lines[m[2] + 1]
+    local s, e = legend_line:find(spec.phrase, 1, true)
+    assert(s, spec.group .. " phrase found in its line")
+    eq(m[3], s - 1, spec.group .. " start col")
+    eq(m[4].end_col, e, spec.group .. " end col")
+    eq(m[4].priority, 200, spec.group .. " priority")
+  end
+
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
 end)
 
 -- ── summary ──────────────────────────────────────────────────────────────────

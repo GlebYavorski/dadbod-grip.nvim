@@ -222,6 +222,118 @@ test("info_float: entered by default", function()
   eq(vim.api.nvim_get_current_win(), before, "focus restored after close")
 end)
 
+test("info_float: scratch buffer options match a throwaway float, not a file", function()
+  with_float({ lines = { "x" }, width = 20, height = 2 }, function(_, buf)
+    eq(vim.bo[buf].buftype, "nofile", "buftype")
+    eq(vim.bo[buf].bufhidden, "hide", "bufhidden")
+    eq(vim.bo[buf].swapfile, false, "swapfile")
+  end)
+end)
+
+-- ── dismiss_float ───────────────────────────────────────────────────────────
+-- info_float only opens the window; dismiss_float wires the standard close
+-- behavior (q/<Esc> and leaving the window) on top of it. Covered here since
+-- both first-pass call sites (view.lua's popup, properties.lua) rely on it
+-- and it had no committed test at all before task 14.
+
+--- Open a float wired with dismiss_float, hand (win, buf, close, group) to fn.
+--- Always closes and wipes the buffer afterward, whether or not fn left it open.
+local function with_dismissable_float(fn)
+  local caller_win = vim.api.nvim_get_current_win()
+  local group = vim.api.nvim_create_augroup("ui_spec_dismiss_float", { clear = true })
+  local win, buf = ui.info_float({ lines = { "x" }, width = 20, height = 2 })
+  local close = ui.dismiss_float({ win = win, buf = buf, caller_win = caller_win, group = group })
+  local ok, err = pcall(fn, win, buf, close, group, caller_win)
+  pcall(vim.api.nvim_win_close, win, true)
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  if not ok then error(err, 0) end
+end
+
+--- q/<Esc> must land back on caller_win *by construction*, not by nvim's
+--- default "previous window" fallback -- with only caller_win and the float
+--- around, that fallback would pick caller_win anyway and the assertion
+--- couldn't tell a real refocus from an accidental one. An extra window,
+--- visited between opening the float and dismissing it (e.g. the user tabbed
+--- through with <C-w>w and came back), makes caller_win no longer the
+--- window-history default, so only dismiss_float's explicit
+--- nvim_set_current_win(caller_win) can land focus there.
+local function with_dismissable_float_and_decoy(fn)
+  local caller_win = vim.api.nvim_get_current_win()
+  vim.cmd("split")
+  local decoy_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_set_current_win(caller_win)
+
+  local group = vim.api.nvim_create_augroup("ui_spec_dismiss_float_decoy", { clear = true })
+  local win, buf = ui.info_float({ lines = { "x" }, width = 20, height = 2 })
+  local close = ui.dismiss_float({ win = win, buf = buf, caller_win = caller_win, group = group })
+  vim.api.nvim_set_current_win(decoy_win)
+  vim.api.nvim_set_current_win(win)
+
+  local ok, err = pcall(fn, win, buf, close, caller_win, decoy_win)
+  pcall(vim.api.nvim_win_close, win, true)
+  pcall(vim.api.nvim_win_close, decoy_win, true)
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  if not ok then error(err, 0) end
+end
+
+test("dismiss_float: q closes the float and returns focus to caller_win", function()
+  with_dismissable_float_and_decoy(function(win, _, _, caller_win, decoy_win)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("q", true, false, true), "x", false)
+    eq(vim.api.nvim_win_is_valid(win), false, "float window closed")
+    eq(vim.api.nvim_get_current_win(), caller_win, "focus back on caller_win")
+    assert(vim.api.nvim_get_current_win() ~= decoy_win, "not left on the decoy window")
+  end)
+end)
+
+test("dismiss_float: <Esc> closes the float and returns focus to caller_win", function()
+  with_dismissable_float_and_decoy(function(win, _, _, caller_win, decoy_win)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "x", false)
+    eq(vim.api.nvim_win_is_valid(win), false, "float window closed")
+    eq(vim.api.nvim_get_current_win(), caller_win, "focus back on caller_win")
+    assert(vim.api.nvim_get_current_win() ~= decoy_win, "not left on the decoy window")
+  end)
+end)
+
+test("dismiss_float: the returned close() closes the window directly", function()
+  -- Exercises the closure the way properties.lua's gI/reopen keymap does:
+  -- called directly, not through the q/<Esc> keymaps this same call wires up.
+  with_dismissable_float(function(win, _, close)
+    close()
+    eq(vim.api.nvim_win_is_valid(win), false, "float window closed")
+  end)
+end)
+
+test("dismiss_float: leaving the window (WinLeave) closes it without pressing q", function()
+  with_dismissable_float(function(win, _, _, _, caller_win)
+    vim.api.nvim_set_current_win(win)
+    vim.api.nvim_set_current_win(caller_win) -- e.g. <C-w>w away from the float
+    vim.wait(200, function() return not vim.api.nvim_win_is_valid(win) end, 10)
+    eq(vim.api.nvim_win_is_valid(win), false, "float window closed on WinLeave")
+  end)
+end)
+
+test("dismiss_float: the WinLeave autocmd is consumed, not left dangling", function()
+  with_dismissable_float(function(win, _, _, group)
+    eq(#vim.api.nvim_get_autocmds({ group = group }), 1, "one autocmd while the float is open")
+    vim.api.nvim_set_current_win(win)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("q", true, false, true), "x", false)
+    eq(#vim.api.nvim_get_autocmds({ group = group }), 0, "none left after close")
+  end)
+end)
+
+test("dismiss_float: repeated open/close cycles never accumulate autocmds", function()
+  local caller_win = vim.api.nvim_get_current_win()
+  local group = vim.api.nvim_create_augroup("ui_spec_dismiss_float_repeat", { clear = true })
+  for _ = 1, 3 do
+    local win, buf = ui.info_float({ lines = { "x" }, width = 20, height = 2 })
+    ui.dismiss_float({ win = win, buf = buf, caller_win = caller_win, group = group })
+    vim.api.nvim_set_current_win(win)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("q", true, false, true), "x", false)
+    pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  end
+  eq(#vim.api.nvim_get_autocmds({ group = group }), 0, "no leftover autocmds after 3 cycles")
+end)
+
 -- ── report_split ────────────────────────────────────────────────────────────
 
 test("report_split: read-only named scratch buffer in a bottom split", function()
