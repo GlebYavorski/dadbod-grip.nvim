@@ -1085,12 +1085,16 @@ end
 --- column's display-column span [start_vcol, finish_vcol] (all 1-based; a display
 --- column c is visible iff leftcol < c <= leftcol + textwidth), return the new
 --- leftcol that seats the right edge at the window's right, keeping the column's
---- start visible when the column fits. Returns nil when no scroll is needed.
+--- start visible when the column fits. `margin` reveals that many extra display
+--- columns past finish_vcol so the trailing separator/border glyph (" ║" / " │ ")
+--- is shown too, not just the cell data. Returns nil when no scroll is needed.
 --- Pure/testable.
-function M._reveal_leftcol(leftcol, textwidth, start_vcol, finish_vcol)
+function M._reveal_leftcol(leftcol, textwidth, start_vcol, finish_vcol, margin)
+  margin = margin or 0
   if textwidth <= 0 then return nil end
-  if finish_vcol <= leftcol + textwidth then return nil end  -- right edge already visible
-  local target = finish_vcol - textwidth       -- seat the right edge at the window's right
+  local want = finish_vcol + margin                  -- reveal this far to the right
+  if want <= leftcol + textwidth then return nil end -- edge (incl. border) already visible
+  local target = want - textwidth              -- seat the right edge at the window's right
   if target > start_vcol - 1 then              -- but never scroll the column's start off-screen
     target = start_vcol - 1                     -- (column wider than the window: show the start)
   end
@@ -1130,7 +1134,8 @@ local function reveal_col_edge(win, buf, lnum, bp)
   if not wininfo then return end
   local textwidth = wininfo.width - wininfo.textoff
   local vw = vim.fn.winsaveview()
-  local new_leftcol = M._reveal_leftcol(vw.leftcol, textwidth, start_vcol, finish_vcol)
+  -- +2: the trailing " ║" / " │ " border sits 2 display columns past the cell data
+  local new_leftcol = M._reveal_leftcol(vw.leftcol, textwidth, start_vcol, finish_vcol, 2)
   if new_leftcol then
     vw.leftcol = new_leftcol
     vim.fn.winrestview(vw)

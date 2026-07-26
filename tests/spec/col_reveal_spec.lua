@@ -70,5 +70,25 @@ test("nil for non-positive textwidth", function()
   eq(reveal(0, 0, 1, 10), nil, "degenerate window")
 end)
 
+test("margin reveals extra columns for the trailing border glyph", function()
+  -- column [50,70], textwidth 40, margin 2: reveal to 72 → leftcol = 72-40 = 32
+  eq(reveal(0, 40, 50, 70, 2), 32, "seat border (finish+2) at the right edge")
+end)
+
+test("margin triggers a scroll when only the border is off-screen", function()
+  -- data ends exactly at the right edge (70) but the border at 72 is hidden
+  eq(reveal(30, 40, 50, 70, 2), 32, "scroll the extra 2 cols to show the border")
+end)
+
+test("margin: nil when border already visible", function()
+  -- finish 66 + margin 2 = 68, within visible (30,70] → no scroll
+  eq(reveal(30, 40, 50, 66, 2), nil, "border already on screen")
+end)
+
+test("margin never scrolls the column start off-screen", function()
+  -- wide column [50,90], textwidth 20, margin 2 → still clamp to start_vcol - 1
+  eq(reveal(0, 20, 50, 90, 2), 49, "start visibility wins over border margin")
+end)
+
 print(string.format("\ncol_reveal_spec: %d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
