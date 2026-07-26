@@ -126,6 +126,45 @@ function M.info_float(opts)
   return vim.api.nvim_open_win(buf, enter, cfg), buf
 end
 
+--- Wire the standard dismissal for a focused info float: `q` and `<Esc>` close
+--- it and hand focus back to the window it was opened from, and leaving the
+--- float's window closes it as well.
+---
+--- The augroup is a parameter, not a constant: each module registers the
+--- WinLeave in its own group so that its own reload/clear keeps owning it.
+---
+--- @param opts table
+---   win        integer  the float window
+---   buf        integer  the float buffer (keymaps and WinLeave are buffer-local)
+---   caller_win integer  window to focus after q/<Esc>
+---   group      integer  augroup id for the WinLeave autocmd
+--- @return function close  closes the float without moving focus
+function M.dismiss_float(opts)
+  local win, buf, caller_win = opts.win, opts.buf, opts.caller_win
+
+  local function close()
+    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+  end
+
+  vim.api.nvim_create_autocmd("WinLeave", {
+    group  = opts.group,
+    buffer = buf,
+    once = true,
+    callback = function() vim.schedule(close) end,
+  })
+
+  for _, key in ipairs({ "q", "<Esc>" }) do
+    vim.keymap.set("n", key, function()
+      close()
+      if vim.api.nvim_win_is_valid(caller_win) then
+        vim.api.nvim_set_current_win(caller_win)
+      end
+    end, { buffer = buf })
+  end
+
+  return close
+end
+
 --- Show an animated spinner float, run fn(), then clear the float.
 ---
 --- IMPORTANT: fn() must be synchronous OR use vim.wait() for async work.

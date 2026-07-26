@@ -240,29 +240,13 @@ function M.open(table_name, url, grip_win)
 
   -- Close keymaps
   local caller_win = grip_win or vim.fn.win_getid()
-  local function close()
-    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
-  end
-
-  vim.api.nvim_create_autocmd("WinLeave", {
-    group  = _ag,
-    buffer = popup_buf,
-    once = true,
-    callback = function() vim.schedule(close) end,
+  local close = ui.dismiss_float({
+    win = win, buf = popup_buf, caller_win = caller_win, group = _ag,
   })
-
-  for _, key in ipairs({ "q", "<Esc>" }) do
-    vim.keymap.set("n", key, function()
-      close()
-      if vim.api.nvim_win_is_valid(caller_win) then
-        vim.api.nvim_set_current_win(caller_win)
-      end
-    end, { buffer = popup_buf })
-  end
 
   -- gI: reopen (refresh) properties
   local function reopen()
-    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+    close()
     if vim.api.nvim_win_is_valid(caller_win) then
       vim.api.nvim_set_current_win(caller_win)
     end
