@@ -122,8 +122,12 @@ local function ensure_buf(url)
     completion.register_cmp_source()
   end
   -- Pre-warm schema cache regardless of completion mode (blink/cmp sources need it too).
+  local warm_bufnr = _pad_bufnr
   vim.schedule(function()
-    local u = (vim.b[_pad_bufnr] and vim.b[_pad_bufnr].db) or vim.g.db
+    -- The pad is bufhidden=wipe: it can be gone by the time this runs, and
+    -- indexing vim.b on a dead buffer raises "Invalid buffer id".
+    if not vim.api.nvim_buf_is_valid(warm_bufnr) then return end
+    local u = vim.b[warm_bufnr].db or vim.g.db
     if u and u ~= "" then pcall(require("dadbod-grip.completion").get_schema, u) end
   end)
 

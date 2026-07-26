@@ -882,8 +882,13 @@ function M.open(arg, url, opts)
       vim.notify(string.format("%s executed (%dms)", stmt_type, ms), vim.log.levels.INFO)
       local history = require("dadbod-grip.history")
       history.record({ sql = mutation_sql, url = exec_conn, type = stmt_type:lower(), elapsed_ms = ms })
-      for bufnr_r, session_r in pairs(view._sessions) do
-        if session_r.on_refresh then session_r.on_refresh(bufnr_r); break end
+      -- Refresh the grids the user can actually see. Iterating _sessions and
+      -- breaking on the first hit picked an arbitrary grid (pairs order), which
+      -- could leave the visible one stale while refreshing a hidden buffer.
+      for _, wid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        local bufnr_r = vim.api.nvim_win_get_buf(wid)
+        local session_r = view._sessions[bufnr_r]
+        if session_r and session_r.on_refresh then session_r.on_refresh(bufnr_r) end
       end
     end
     return

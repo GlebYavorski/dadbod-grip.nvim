@@ -153,6 +153,8 @@ local function ensure_highlights()
   hl(0, "GripUrl",          { underline = true,    fg = "#89b4fa", ctermfg = 117 })
   hl(0, "GripWatch",        { bold = true,         fg = "#89b4fa", ctermfg = 117 })
   hl(0, "GripColHighlight", { bg = "#313244", ctermbg = 237 })
+  -- Dim marker group: filter-line bullets, column type annotations.
+  hl(0, "GripColType",      { fg = "#6c7086", ctermfg = 243 })
 end
 ensure_highlights() -- define groups on module load so welcome screen can use them
 vim.api.nvim_create_autocmd("ColorScheme", {
@@ -5057,7 +5059,7 @@ function M._setup_keymaps(bufnr)
       if not win_id then goto continue end  -- bufhidden=wipe: no window means already wiped
       local name = vim.api.nvim_buf_get_name(bnum)
       local short = name:match("^grip://(.+)$") or name
-      local rows = s.state and s.state.total_rows
+      local rows = s.total_rows
       local row_label = rows and (" [" .. rows .. " rows]") or ""
       local pin_label = s.pinned and " [pinned]" or ""
       local elapsed = s.elapsed_ms and (" " .. s.elapsed_ms .. "ms") or ""

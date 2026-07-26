@@ -283,7 +283,12 @@ function M.build_schema_context(url, question)
         table.insert(others, t)
       end
     end
-    table_names = mentioned
+    -- Cap the mentioned set too: with more than 30 mentioned tables the
+    -- fill-up bound below goes negative and the 30-table budget was bypassed.
+    table_names = {}
+    for i = 1, math.min(30, #mentioned) do
+      table.insert(table_names, mentioned[i])
+    end
     for i = 1, math.min(30 - #table_names, #others) do
       table.insert(table_names, others[i])
     end
