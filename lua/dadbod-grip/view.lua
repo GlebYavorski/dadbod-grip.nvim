@@ -1913,7 +1913,10 @@ function M.switch_view(bufnr, view_name)
     else
       query_sql = string.format('SELECT * FROM "%s" LIMIT 100', (table_name or ""):gsub('"', '""'))
     end
-    vim.cmd("GripExplain " .. query_sql)
+    -- Pass through nvim_cmd args: string form splits the argument on newlines
+    -- (and on |), so a multi-line query pad SQL was executed as several
+    -- Ex commands instead of being handed to :GripExplain.
+    vim.cmd({ cmd = "GripExplain", args = { query_sql } })
     return
   end
 
@@ -4641,7 +4644,8 @@ function M._setup_keymaps(bufnr)
       vim.notify("No query to explain", vim.log.levels.INFO)
       return
     end
-    vim.cmd("GripExplain " .. explain_sql)
+    -- Table arg form: keeps multi-line SQL in one piece (see switch_view).
+    vim.cmd({ cmd = "GripExplain", args = { explain_sql } })
   end, "Explain current query")
 
   -- gx: open URL in current cell (mirrors cell editor gx and Vim convention)
