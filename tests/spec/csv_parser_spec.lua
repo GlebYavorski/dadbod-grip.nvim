@@ -122,6 +122,52 @@ test("psql: single row footer", function()
   eq(r.rows[1][1], "42")
 end)
 
+-- ── perf-rewrite regression (scan-forward quote parsing) ───────────────────
+-- These pin down behaviour that a byte-scanning rewrite of the quoted-field
+-- parser could plausibly get wrong: unterminated quotes, UTF-8 content, and
+-- input with no trailing newline. Verified against the old char-by-char
+-- implementation via a differential harness before committing.
+
+test("regression: unterminated quote at end of input", function()
+  local r = db.parse_csv('a,b\n1,"unterminated tail')
+  eq(#r.rows, 1)
+  eq(r.rows[1][1], "1")
+  eq(r.rows[1][2], "unterminated tail")
+end)
+
+test("regression: unterminated quote ending in an escaped-quote pair", function()
+  local r = db.parse_csv('a,b\n1,"ab""')
+  eq(r.rows[1][2], 'ab"')
+end)
+
+test("regression: UTF-8 content inside quoted field", function()
+  local r = db.parse_csv('name\n"Björk Guðmundsdóttir"\n')
+  eq(r.rows[1][1], "Björk Guðmundsdóttir")
+end)
+
+test("regression: UTF-8 content unquoted", function()
+  local r = db.parse_csv("name,city\nБоб,Москва\n")
+  eq(r.rows[1][1], "Боб")
+  eq(r.rows[1][2], "Москва")
+end)
+
+test("regression: no trailing newline, single data row", function()
+  local r = db.parse_csv("a,b\n1,2")
+  eq(#r.rows, 1)
+  eq(r.rows[1][1], "1")
+  eq(r.rows[1][2], "2")
+end)
+
+test("regression: closing quote followed directly by more text (not a delimiter)", function()
+  -- Quirk of the original implementation: once a quoted field closes, only
+  -- a comma/newline/EOF is consumed as a delimiter. Anything else is left
+  -- for the outer loop, which starts a *new* unquoted field right there.
+  local r = db.parse_csv('col,x\n"foo"bar,1\n')
+  eq(r.rows[1][1], "foo")
+  eq(r.rows[1][2], "bar")
+  eq(r.rows[1][3], "1")
+end)
+
 -- ── summary ─────────────────────────────────────────────────────────────────
 print(string.format("\ncsv_parser_spec: %d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

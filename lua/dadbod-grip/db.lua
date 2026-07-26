@@ -53,6 +53,8 @@ function M.parse_csv(raw)
     return { columns = {}, rows = {} }
   end
 
+  local DQUOTE, COMMA, LF, CR = 34, 44, 10, 13
+
   -- Parse entire raw string respecting quoted fields that span newlines.
   local all_rows = {}
   local fields = {}
@@ -60,45 +62,52 @@ function M.parse_csv(raw)
   local len = #raw
 
   while i <= len do
-    local ch = raw:sub(i, i)
+    local b = raw:byte(i)
 
-    if ch == '"' then
-      -- Quoted field: may contain newlines, commas, escaped quotes
-      local field = ""
+    if b == DQUOTE then
+      -- Quoted field: may contain newlines, commas, escaped quotes. Scan
+      -- forward to the next quote and collect chunks in a table instead of
+      -- concatenating byte-by-byte (that was O(n^2) on large quoted blobs).
       i = i + 1
-      while i <= len do
-        local qch = raw:sub(i, i)
-        if qch == '"' then
-          if raw:sub(i + 1, i + 1) == '"' then
-            field = field .. '"'
-            i = i + 2
-          else
-            i = i + 1
-            break
-          end
+      local start = i
+      local parts = {}
+      while true do
+        local qpos = raw:find('"', i, true)
+        if not qpos then
+          -- Unterminated quote: the rest of the input is the field.
+          parts[#parts + 1] = raw:sub(start, len)
+          i = len + 1
+          break
+        elseif raw:byte(qpos + 1) == DQUOTE then
+          -- Escaped quote (""): keep one literal quote, skip both.
+          parts[#parts + 1] = raw:sub(start, qpos)
+          i = qpos + 2
+          start = i
         else
-          field = field .. qch
-          i = i + 1
+          -- Closing quote.
+          parts[#parts + 1] = raw:sub(start, qpos - 1)
+          i = qpos + 1
+          break
         end
       end
-      table.insert(fields, field)
+      table.insert(fields, table.concat(parts))
       -- After closing quote: expect comma, newline, or end
       if i <= len then
-        ch = raw:sub(i, i)
-        if ch == "," then
+        b = raw:byte(i)
+        if b == COMMA then
           i = i + 1
-        elseif ch == "\n" or ch == "\r" then
-          if ch == "\r" and raw:sub(i + 1, i + 1) == "\n" then i = i + 1 end
+        elseif b == LF or b == CR then
+          if b == CR and raw:byte(i + 1) == LF then i = i + 1 end
           i = i + 1
           table.insert(all_rows, fields)
           fields = {}
         end
       end
-    elseif ch == "," then
+    elseif b == COMMA then
       table.insert(fields, "")
       i = i + 1
-    elseif ch == "\n" or ch == "\r" then
-      if ch == "\r" and raw:sub(i + 1, i + 1) == "\n" then i = i + 1 end
+    elseif b == LF or b == CR then
+      if b == CR and raw:byte(i + 1) == LF then i = i + 1 end
       i = i + 1
       table.insert(all_rows, fields)
       fields = {}
@@ -106,17 +115,17 @@ function M.parse_csv(raw)
       -- Unquoted field
       local start = i
       while i <= len do
-        local uch = raw:sub(i, i)
-        if uch == "," or uch == "\n" or uch == "\r" then break end
+        local ub = raw:byte(i)
+        if ub == COMMA or ub == LF or ub == CR then break end
         i = i + 1
       end
       table.insert(fields, raw:sub(start, i - 1))
       if i <= len then
-        ch = raw:sub(i, i)
-        if ch == "," then
+        b = raw:byte(i)
+        if b == COMMA then
           i = i + 1
-        elseif ch == "\n" or ch == "\r" then
-          if ch == "\r" and raw:sub(i + 1, i + 1) == "\n" then i = i + 1 end
+        elseif b == LF or b == CR then
+          if b == CR and raw:byte(i + 1) == LF then i = i + 1 end
           i = i + 1
           table.insert(all_rows, fields)
           fields = {}
