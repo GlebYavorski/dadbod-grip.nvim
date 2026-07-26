@@ -368,6 +368,55 @@ end
 
 -- ── generation ────────────────────────────────────────────────────────────────
 
+--- POST a provider request with curl and hand the extracted text back.
+--- Every failure mode (transport, malformed JSON, API error payload, empty
+--- extraction) arrives as callback(nil, err); success as callback(text).
+--- Always called back on the main loop.
+--- @param req      table    { url, headers, body } from provider.build_request
+--- @param provider table    provider spec (its parse_response extracts the text)
+--- @param empty_err string  message when the provider extracts nothing
+--- @param callback fun(text: string|nil, err: string|nil)
+local function post_json(req, provider, empty_err, callback)
+  local curl_args = { "curl", "-s", "-X", "POST" }
+  for _, h in ipairs(req.headers) do
+    table.insert(curl_args, "-H")
+    table.insert(curl_args, h)
+  end
+  table.insert(curl_args, "-d")
+  table.insert(curl_args, vim.fn.json_encode(req.body))
+  table.insert(curl_args, req.url)
+
+  vim.system(curl_args, { text = true }, function(result)
+    vim.schedule(function()
+      if result.code ~= 0 then
+        callback(nil, "curl failed: " .. (result.stderr or "unknown error"))
+        return
+      end
+
+      local ok, body = pcall(vim.fn.json_decode, result.stdout)
+      if not ok then
+        callback(nil, "Failed to parse response JSON")
+        return
+      end
+
+      -- Check for API error
+      if body.error then
+        local err_msg = type(body.error) == "table" and (body.error.message or "API error") or tostring(body.error)
+        callback(nil, err_msg)
+        return
+      end
+
+      local text, parse_err = provider.parse_response(body)
+      if not text then
+        callback(nil, parse_err or empty_err)
+        return
+      end
+
+      callback(text)
+    end)
+  end)
+end
+
 --- Generate SQL from natural language. Async via curl.
 function M.generate_sql(question, url, callback, existing_sql)
   local provider_name = M.resolve_provider()
@@ -409,44 +458,12 @@ function M.generate_sql(question, url, callback, existing_sql)
   local model = _opts.model or provider.default_model
   local req = provider.build_request(system_prompt, question, model, api_key, _opts.base_url)
 
-  -- Build curl args
-  local curl_args = { "curl", "-s", "-X", "POST" }
-  for _, h in ipairs(req.headers) do
-    table.insert(curl_args, "-H")
-    table.insert(curl_args, h)
-  end
-  table.insert(curl_args, "-d")
-  table.insert(curl_args, vim.fn.json_encode(req.body))
-  table.insert(curl_args, req.url)
-
-  vim.system(curl_args, { text = true }, function(result)
-    vim.schedule(function()
-      if result.code ~= 0 then
-        callback(nil, "curl failed: " .. (result.stderr or "unknown error"))
-        return
-      end
-
-      local ok, body = pcall(vim.fn.json_decode, result.stdout)
-      if not ok then
-        callback(nil, "Failed to parse response JSON")
-        return
-      end
-
-      -- Check for API error
-      if body.error then
-        local err_msg = type(body.error) == "table" and (body.error.message or "API error") or tostring(body.error)
-        callback(nil, err_msg)
-        return
-      end
-
-      local sql_text, parse_err = provider.parse_response(body)
-      if not sql_text then
-        callback(nil, parse_err or "Failed to extract SQL from response")
-        return
-      end
-
-      callback(M._strip_fences(sql_text))
-    end)
+  post_json(req, provider, "Failed to extract SQL from response", function(sql_text, err)
+    if err then
+      callback(nil, err)
+      return
+    end
+    callback(M._strip_fences(sql_text))
   end)
 end
 
@@ -485,53 +502,24 @@ function M.generate_rows(n, ddl, adapter, table_name, url, callback)
   local model = _opts.model or provider.default_model
   local req = provider.build_request(system_prompt, user_msg, model, api_key, _opts.base_url)
 
-  local curl_args = { "curl", "-s", "-X", "POST" }
-  for _, h in ipairs(req.headers) do
-    table.insert(curl_args, "-H")
-    table.insert(curl_args, h)
-  end
-  table.insert(curl_args, "-d")
-  table.insert(curl_args, vim.fn.json_encode(req.body))
-  table.insert(curl_args, req.url)
+  post_json(req, provider, "Failed to extract content from response", function(raw_text, err)
+    if err then
+      callback(nil, err)
+      return
+    end
 
-  vim.system(curl_args, { text = true }, function(result)
-    vim.schedule(function()
-      if result.code ~= 0 then
-        callback(nil, "curl failed: " .. (result.stderr or "unknown error"))
-        return
-      end
+    -- Try parsing directly, then after stripping markdown fences
+    local json_ok, parsed = pcall(vim.fn.json_decode, raw_text)
+    if not json_ok or type(parsed) ~= "table" then
+      local stripped = M._strip_fences(raw_text)
+      json_ok, parsed = pcall(vim.fn.json_decode, stripped)
+    end
+    if not json_ok or type(parsed) ~= "table" then
+      callback(nil, "AI returned non-JSON: " .. (raw_text or ""))
+      return
+    end
 
-      local ok, body = pcall(vim.fn.json_decode, result.stdout)
-      if not ok then
-        callback(nil, "Failed to parse response JSON")
-        return
-      end
-
-      if body.error then
-        local err_msg = type(body.error) == "table" and (body.error.message or "API error") or tostring(body.error)
-        callback(nil, err_msg)
-        return
-      end
-
-      local raw_text, parse_err = provider.parse_response(body)
-      if not raw_text then
-        callback(nil, parse_err or "Failed to extract content from response")
-        return
-      end
-
-      -- Try parsing directly, then after stripping markdown fences
-      local json_ok, parsed = pcall(vim.fn.json_decode, raw_text)
-      if not json_ok or type(parsed) ~= "table" then
-        local stripped = M._strip_fences(raw_text)
-        json_ok, parsed = pcall(vim.fn.json_decode, stripped)
-      end
-      if not json_ok or type(parsed) ~= "table" then
-        callback(nil, "AI returned non-JSON: " .. (raw_text or ""))
-        return
-      end
-
-      callback(parsed, nil)
-    end)
+    callback(parsed, nil)
   end)
 end
 
