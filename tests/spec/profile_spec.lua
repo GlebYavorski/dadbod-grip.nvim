@@ -192,6 +192,105 @@ test("build_lines: highlight marks generated", function()
   assert(#marks > 0, "should have highlight marks")
 end)
 
+-- ── pad (display-width, not byte-length) ─────────────────────────────────────
+-- Task 11: alignment must use display width, not #s. The old implementation
+-- compared strdisplaywidth(s) >= w and then took s:sub(1, w) — a BYTE offset
+-- computed from a DISPLAY-WIDTH number. For non-ASCII input that corrupted
+-- even strings that exactly fit (no truncation should happen at all).
+
+test("pad: ascii unchanged (fits, no truncation)", function()
+  eq(profile._pad("id", 6), "id    ", "ascii pad")
+end)
+
+test("pad: ascii truncates by byte (unchanged behavior, no marker)", function()
+  eq(profile._pad("abcdefgh", 4), "abcd", "ascii truncate, no ellipsis")
+end)
+
+test("pad: cyrillic value exactly at width is NOT corrupted", function()
+  -- "имя" = 3 display cells, 6 bytes. Old code: strdisplaywidth("имя")=3 >= w=3
+  -- -> "имя":sub(1,3) took the first 3 BYTES = 1.5 characters -> garbage.
+  local out = profile._pad("имя", 3)
+  eq(out, "имя", "exact-width cyrillic value survives intact")
+end)
+
+test("pad: cyrillic value narrower than width is padded with spaces", function()
+  local out = profile._pad("имя", 6)
+  eq(out, "имя   ", "cyrillic + 3 padding spaces")
+  eq(vim.fn.strdisplaywidth(out), 6, "display width matches target")
+end)
+
+test("pad: cyrillic value wider than width truncates on a char boundary", function()
+  local out = profile._pad("привет", 3)
+  eq(vim.fn.strdisplaywidth(out), 3, "truncated to exactly 3 display cells")
+  assert(pcall(vim.str_utf_pos, out), "output is valid UTF-8 (no split multibyte char)")
+end)
+
+test("pad: CJK (2 cells/char) truncates without splitting a character", function()
+  local out = profile._pad("日本語テキスト", 5)
+  eq(vim.fn.strdisplaywidth(out), 5, "truncated to exactly 5 display cells (even count for 2-wide chars)")
+  assert(pcall(vim.str_utf_pos, out), "output is valid UTF-8")
+end)
+
+test("pad: emoji value exactly at width is NOT corrupted", function()
+  local out = profile._pad("😀😀", 4)
+  eq(out, "😀😀", "exact-width emoji value survives intact")
+end)
+
+-- ── build_lines: non-ASCII column data keeps the table aligned ──────────────
+-- Real end-to-end check: a table with a Cyrillic column name/min/max and a
+-- CJK/emoji column name/min/max must still line up its "Min"/"Max"/"Dist"
+-- fields at the same display column across every data row.
+
+test("build_lines: non-ASCII columns produce equal-width aligned rows", function()
+  local data = {
+    table_name = "смеси",
+    column_count = 2,
+    shown_count = 2,
+    total_rows = 10,
+    profiles = {
+      {
+        name = "категория", data_type = "text", category = "text",
+        total = 10, distinct = 3, nulls = 0,
+        completeness = 100.0, cardinality = 30.0,
+        min = "активный", max = "приостановлен", mean = nil,
+        histogram = profile.sparkline({1,2,3,4,5,6,7,8}, 8),
+        top_values = nil,
+      },
+      {
+        name = "商品名", data_type = "text", category = "text",
+        total = 10, distinct = 2, nulls = 0,
+        completeness = 100.0, cardinality = 20.0,
+        min = "🍜ラーメン", max = "寿司セット", mean = nil,
+        histogram = profile.sparkline({8,1,1,1,1,1,1,1}, 8),
+        top_values = nil,
+      },
+    },
+  }
+  local lines = profile.build_lines(data, 120)
+
+  -- Locate the two data rows (they follow the header + dashed separator).
+  local row_lines = {}
+  for _, l in ipairs(lines) do
+    if l:find("активный", 1, true) or l:find("ラーメン", 1, true) then
+      table.insert(row_lines, l)
+    end
+  end
+  eq(#row_lines, 2, "found both non-ASCII data rows")
+
+  -- Every data row must have the same display width up to (and including)
+  -- the histogram, i.e. the whole line, since fields are padded to fixed
+  -- display-width columns and the sparkline is always BUCKET_COUNT chars.
+  local widths = {}
+  for _, l in ipairs(row_lines) do
+    table.insert(widths, vim.fn.strdisplaywidth(l))
+  end
+  eq(widths[1], widths[2], "cyrillic row and CJK/emoji row have equal display width")
+
+  for _, l in ipairs(row_lines) do
+    assert(pcall(vim.str_utf_pos, l), "row is valid UTF-8: " .. l)
+  end
+end)
+
 -- ── SQL generation ────────────────────────────────────────────────────────────
 
 test("build_stats_sql: generates valid SQL structure", function()

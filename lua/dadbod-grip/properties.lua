@@ -106,17 +106,19 @@ local function build_lines(props)
   -- Calculate column widths for the table
   local col_widths = { num = 3, name = 4, dtype = 4, null = 4, default = 7 }
   for i, col in ipairs(props.columns) do
+    -- Loop index -> tostring(i) is always ASCII digits, so #s is fine here.
     col_widths.num = math.max(col_widths.num, #tostring(i))
-    col_widths.name = math.max(col_widths.name, #col.column_name)
-    col_widths.dtype = math.max(col_widths.dtype, #col.data_type)
-    col_widths.default = math.max(col_widths.default, #col.column_default)
+    -- Column name/type/default come from the DB and may be non-ASCII.
+    col_widths.name = math.max(col_widths.name, vim.fn.strdisplaywidth(col.column_name))
+    col_widths.dtype = math.max(col_widths.dtype, vim.fn.strdisplaywidth(col.data_type))
+    col_widths.default = math.max(col_widths.default, vim.fn.strdisplaywidth(col.column_default))
   end
   -- Clamp widths
   col_widths.name = math.min(col_widths.name, 24)
   col_widths.dtype = math.min(col_widths.dtype, 20)
   col_widths.default = math.min(col_widths.default, 20)
 
-  local function pad(s, w) return s .. string.rep(" ", math.max(0, w - #s)) end
+  local function pad(s, w) return (ui.pad_display(s, w, false)) end
   local function col_row(num, name, dtype, nullable, default)
     return "  " .. pad(num, col_widths.num) ..
            "  " .. pad(name, col_widths.name) ..
@@ -143,14 +145,12 @@ local function build_lines(props)
 
     local nullable = col.is_nullable == "YES" and "YES" or "NO"
     local default_val = col.column_default ~= "" and col.column_default or ""
-    -- Truncate long values so they don't break column alignment
-    local col_name = col.column_name
-    if #col_name > col_widths.name then col_name = col_name:sub(1, col_widths.name - 1) .. "~" end
-    local dtype = col.data_type
-    if #dtype > col_widths.dtype then dtype = dtype:sub(1, col_widths.dtype - 1) .. "~" end
-    if #default_val > col_widths.default then
-      default_val = default_val:sub(1, col_widths.default - 1) .. "~"
-    end
+    -- Truncate long values so they don't break column alignment. "~" (not the
+    -- "…" ui.lua defaults to) to match this module's established style; a
+    -- no-op when the value already fits.
+    local col_name = ui.truncate_display(col.column_name, col_widths.name, true, "~")
+    local dtype = ui.truncate_display(col.data_type, col_widths.dtype, true, "~")
+    default_val = ui.truncate_display(default_val, col_widths.default, true, "~")
 
     add(col_row(tostring(i), col_name, dtype, nullable, default_val .. marker))
     col_line_map[#lines] = col.column_name
@@ -183,11 +183,11 @@ local function build_lines(props)
     -- Calculate max name width for alignment
     local max_name = 0
     for _, idx in ipairs(props.indexes) do
-      max_name = math.max(max_name, #idx.name)
+      max_name = math.max(max_name, vim.fn.strdisplaywidth(idx.name))
     end
     max_name = math.min(max_name, 30)
     for _, idx in ipairs(props.indexes) do
-      local dots = string.rep(".", math.max(2, max_name - #idx.name + 3))
+      local dots = string.rep(".", math.max(2, max_name - vim.fn.strdisplaywidth(idx.name) + 3))
       local idx_type = idx.type or "INDEX"
       local cols_str = table.concat(idx.columns or {}, ", ")
       add("    " .. idx.name .. " " .. dots .. " " .. idx_type .. " (" .. cols_str .. ")")
@@ -200,6 +200,7 @@ local function build_lines(props)
 
   return lines, hl_marks, col_line_map
 end
+M._build_lines = build_lines  -- exposed for unit tests
 
 -- ── open float ──────────────────────────────────────────────────────────────
 

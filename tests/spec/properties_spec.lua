@@ -1,0 +1,143 @@
+-- properties_spec.lua -- unit tests for the table properties float
+-- Task 11: column/type/default alignment must use display width, not byte
+-- length (#s), since column names, types and defaults come straight from the
+-- database and may be non-ASCII.
+local properties = require("dadbod-grip.properties")
+
+local pass, fail = 0, 0
+
+local function test(name, fn)
+  local ok, err = pcall(fn)
+  if ok then pass = pass + 1
+  else fail = fail + 1; print("FAIL: " .. name .. ": " .. tostring(err)) end
+end
+
+local function eq(a, b, msg)
+  assert(a == b, (msg or "") .. ": expected " .. tostring(b) .. ", got " .. tostring(a))
+end
+
+local function contains(s, frag, msg)
+  assert(type(s) == "string" and s:find(frag, 1, true),
+    (msg or "") .. ": expected to contain '" .. frag .. "', got '" .. tostring(s) .. "'")
+end
+
+--- Strict UTF-8 validity check: catches alignment code that byte-slices a
+--- multi-byte character in half (vim.str_utf_pos is too lenient to catch this).
+local function is_valid_utf8(s)
+  local i, n = 1, #s
+  while i <= n do
+    local b = s:byte(i)
+    local len
+    if b < 0x80 then len = 1
+    elseif b >= 0xC2 and b <= 0xDF then len = 2
+    elseif b >= 0xE0 and b <= 0xEF then len = 3
+    elseif b >= 0xF0 and b <= 0xF4 then len = 4
+    else return false end
+    if i + len - 1 > n then return false end
+    for k = 1, len - 1 do
+      local cb = s:byte(i + k)
+      if not cb or cb < 0x80 or cb > 0xBF then return false end
+    end
+    i = i + len
+  end
+  return true
+end
+
+local function mock_props(columns, indexes)
+  return {
+    table_name = "t",
+    columns = columns,
+    primary_keys = {},
+    foreign_keys = {},
+    indexes = indexes or {},
+    row_estimate = 0,
+    size_bytes = 0,
+  }
+end
+
+-- ── ASCII: byte-identical to the pre-Task-11 rendering ───────────────────────
+
+test("build_lines: ascii columns produce a clean aligned table", function()
+  local props = mock_props({
+    { column_name = "id", data_type = "integer", is_nullable = "NO", column_default = "" },
+    { column_name = "name", data_type = "varchar(255)", is_nullable = "YES", column_default = "" },
+  })
+  local lines = properties._build_lines(props)
+  local joined = table.concat(lines, "\n")
+  contains(joined, "id", "has id column")
+  contains(joined, "varchar(255)", "has type")
+end)
+
+test("build_lines: long ascii column name truncates with '~' (unchanged style)", function()
+  local props = mock_props({
+    { column_name = string.rep("a", 40), data_type = "text", is_nullable = "NO", column_default = "" },
+  })
+  local lines = properties._build_lines(props)
+  local joined = table.concat(lines, "\n")
+  contains(joined, "~", "long ascii name truncated with ~ marker")
+  assert(not joined:find("…", 1, true), "must not use the ui.lua default ellipsis for ascii")
+end)
+
+-- ── non-ASCII: display width, character-safe truncation ─────────────────────
+
+test("build_lines: cyrillic column name/type/default are not corrupted", function()
+  local props = mock_props({
+    { column_name = "идентификатор", data_type = "целое", is_nullable = "NO", column_default = "значение_по_умолчанию" },
+  })
+  local lines = properties._build_lines(props)
+  local joined = table.concat(lines, "\n")
+  for _, l in ipairs(lines) do
+    assert(is_valid_utf8(l), "line is valid UTF-8: " .. l)
+  end
+  contains(joined, "~", "long cyrillic default was truncated")
+end)
+
+test("build_lines: CJK/emoji column values keep the table aligned", function()
+  -- Old code sized/padded name+type via #s (byte length). "商品コード" is 15
+  -- bytes but only 10 display cells; the byte-length column width leaves it
+  -- 5 cells short of where the ASCII row ("id") lands, so the Null/Default
+  -- fields drift out of alignment between rows.
+  local props = mock_props({
+    { column_name = "商品コード", data_type = "文字列型テキストデータ", is_nullable = "YES", column_default = "🍜デフォルト値です" },
+    { column_name = "id", data_type = "integer", is_nullable = "NO", column_default = "" },
+  })
+  local lines = properties._build_lines(props)
+  for _, l in ipairs(lines) do
+    assert(is_valid_utf8(l), "line is valid UTF-8: " .. l)
+  end
+
+  local row1, row2
+  for _, l in ipairs(lines) do
+    if l:find("YES", 1, true) then row1 = l end
+    if l:find("NO", 1, true) and l:find("id", 1, true) then row2 = l end
+  end
+  assert(row1 and row2, "found both column rows")
+
+  -- The Null field ("YES"/"NO") must start at the same display column in
+  -- both rows: Name and Type are padded to fixed widths ahead of it.
+  local yes_col = vim.fn.strdisplaywidth(row1:sub(1, row1:find("YES", 1, true) - 1))
+  local no_col  = vim.fn.strdisplaywidth(row2:sub(1, row2:find("NO", 1, true) - 1))
+  eq(yes_col, no_col, "Null field aligned at the same display column across rows")
+end)
+
+test("build_lines: index name dot-fill alignment uses display width", function()
+  local props = mock_props(
+    { { column_name = "id", data_type = "integer", is_nullable = "NO", column_default = "" } },
+    {
+      { name = "индекс_короткий", type = "btree", columns = { "id" } },
+      { name = "ix", type = "btree", columns = { "id" } },
+    }
+  )
+  local lines = properties._build_lines(props)
+  for _, l in ipairs(lines) do
+    assert(is_valid_utf8(l), "line is valid UTF-8: " .. l)
+  end
+  local joined = table.concat(lines, "\n")
+  contains(joined, "индекс_короткий", "cyrillic index name intact")
+  contains(joined, "....", "dot-fill still renders")
+end)
+
+-- ── summary ──────────────────────────────────────────────────────────────────
+
+print(string.format("\nproperties_spec: %d passed, %d failed", pass, fail))
+if fail > 0 then os.exit(1) end

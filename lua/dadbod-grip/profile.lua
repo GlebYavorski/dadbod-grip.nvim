@@ -224,12 +224,10 @@ end
 --- Format a percentage with one decimal place.
 local function fmt_pct(v) return string.format("%.1f%%", v) end
 
---- Pad or truncate a string to a fixed width.
-local function pad(s, w)
-  local sw = vim.fn.strdisplaywidth(s)
-  if sw >= w then return s:sub(1, w) end
-  return s .. string.rep(" ", w - sw)
-end
+--- Pad or truncate a string to a fixed width. No ellipsis marker (matches
+--- this module's original style: values are silently cut, not "…"-marked).
+local function pad(s, w) return (ui.pad_display(s, w, false)) end
+M._pad = pad  -- exposed for unit tests
 
 --- Build display lines for the profile buffer.
 function M.build_lines(profile_data, term_width)
@@ -278,16 +276,14 @@ function M.build_lines(profile_data, term_width)
     mark("GripProfileHeader")
 
     for i, p in ipairs(pd.profiles) do
-      local min_s = p.min:sub(1, mnw)
-      local max_s = p.max:sub(1, mxw)
       local spark = p.histogram or ""
       local line = "  " .. pad(tostring(i), nw)
         .. "  " .. pad(p.name, cw)
         .. "  " .. pad(p.data_type, tw)
         .. "  " .. pad(fmt_pct(p.completeness), pw)
         .. "  " .. pad(fmt_pct(p.cardinality), dw)
-        .. "  " .. pad(min_s, mnw)
-        .. "  " .. pad(max_s, mxw)
+        .. "  " .. pad(p.min, mnw)
+        .. "  " .. pad(p.max, mxw)
         .. "  " .. spark
       add(line)
 

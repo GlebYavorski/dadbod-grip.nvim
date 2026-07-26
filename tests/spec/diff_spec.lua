@@ -23,6 +23,29 @@ local function contains(s, frag, msg)
     (msg or "") .. ": expected to contain '" .. frag .. "', got '" .. tostring(s) .. "'")
 end
 
+--- Strict UTF-8 validity check (unlike vim.str_utf_pos, which is lenient
+--- about a truncated trailing multi-byte sequence). Used to catch alignment
+--- code that byte-slices a multi-byte character in half.
+local function is_valid_utf8(s)
+  local i, n = 1, #s
+  while i <= n do
+    local b = s:byte(i)
+    local len
+    if b < 0x80 then len = 1
+    elseif b >= 0xC2 and b <= 0xDF then len = 2
+    elseif b >= 0xE0 and b <= 0xEF then len = 3
+    elseif b >= 0xF0 and b <= 0xF4 then len = 4
+    else return false end
+    if i + len - 1 > n then return false end
+    for k = 1, len - 1 do
+      local cb = s:byte(i + k)
+      if not cb or cb < 0x80 or cb > 0xBF then return false end
+    end
+    i = i + len
+  end
+  return true
+end
+
 -- ── helpers ───────────────────────────────────────────────────────────────────
 
 --- Build a minimal data state for testing.
@@ -219,6 +242,69 @@ test("adjust_widths: minimum 6 chars per column enforced", function()
   assert(widths.id >= 6, "id at least 6, got " .. widths.id)
   assert(widths.name >= 6, "name at least 6, got " .. widths.name)
   assert(widths.email >= 6, "email at least 6, got " .. widths.email)
+end)
+
+-- ── non-ASCII alignment (Task 11: display width, not byte length) ───────────
+-- render_unified pads/truncates cell values to widths[col] (a display-width
+-- number). The old code truncated with v:sub(1, widths[col] - 1) — a BYTE
+-- offset built from a display-width number — which both mis-measured and
+-- risked splitting a multi-byte character. It also measured the separator
+-- line's dash count from #lines[1] (bytes) instead of its display width.
+
+test("render_unified: cyrillic and CJK/emoji values keep columns aligned", function()
+  local left = make_state(
+    {"id", "label"}, {"id"},
+    {{"1", "тест значение очень длинное строка"}, {"2", "短"}}
+  )
+  local right = make_state(
+    {"id", "label"}, {"id"},
+    {{"1", "другое значение тоже очень длинное"}, {"2", "🍜ラーメン"}}
+  )
+  local result = diff.compute(left, right)
+  local lines = diff._render_unified(result, left, right, left.columns, 60)
+
+  -- Header (lines[1]) + separator (lines[2]) must be built from the SAME
+  -- display width; the separator's dash count is derived from the header.
+  local header_dw = vim.fn.strdisplaywidth(lines[1])
+  local sep_dashes = lines[2]:match("^%s*(%-+)$") or lines[2]:match("(%-+)")
+  assert(sep_dashes, "separator line has dashes")
+  -- "  " prefix (2 cells) + dashes should equal the header's display width.
+  eq(2 + #sep_dashes, header_dw, "separator dash count matches header display width")
+
+  -- Every "label" cell (the long cyrillic values get truncated to fit the
+  -- 30-cell cap) must (a) be exactly widths.label display cells wide and
+  -- (b) never split a multi-byte character in half. Old code truncated with
+  -- v:sub(1, widths[col] - 1) — a byte offset built from a display-width
+  -- number — which sliced mid-character for these inputs.
+  local data_rows = {}
+  for i = 3, #lines do
+    if lines[i] ~= "" and not lines[i]:find("unchanged", 1, true) then
+      table.insert(data_rows, lines[i])
+    end
+  end
+  assert(#data_rows > 0, "has data rows")
+  for _, l in ipairs(data_rows) do
+    -- Field layout: "  " .. id_col .. " | " .. label_col .. "  " .. suffix
+    local sep_byte = l:find(" | ", 1, true)
+    assert(sep_byte, "row has column separator: " .. l)
+    local rest = l:sub(sep_byte + 3)
+    -- label field ends at the next run of 2+ spaces (before the suffix), or
+    -- at end of string if there's no suffix.
+    local field_end = rest:find("  ", 1, true)
+    local label_field = field_end and rest:sub(1, field_end - 1) or rest
+    assert(is_valid_utf8(label_field), "label field is valid UTF-8, not split mid-character: " .. label_field)
+  end
+end)
+
+test("render_compact: cyrillic column values are not corrupted", function()
+  local left  = make_state({"id", "название"}, {"id"}, {{"1", "старый"}})
+  local right = make_state({"id", "название"}, {"id"}, {{"1", "новый"}})
+  local result = diff.compute(left, right)
+  local lines = diff._render_compact(result, left, right, left.columns)
+  local joined = table.concat(lines, "\n")
+  contains(joined, "название", "shows cyrillic column name intact")
+  contains(joined, "новый", "shows cyrillic new value")
+  contains(joined, "старый", "shows cyrillic old value")
 end)
 
 -- ── summary ──────────────────────────────────────────────────────────────────

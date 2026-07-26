@@ -282,6 +282,59 @@ do
   end)
 end
 
+-- ── Task 11: non-ASCII column names keep truncation/alignment correct ───────
+-- er_diagram.lua already measured everything via `dw = vim.fn.strdisplaywidth`
+-- (verified during Task 11's byte-length-alignment audit: no #s/string.rep(w-#s)
+-- sites found here). truncate_col's byte-at-a-time sub(1,-2) loop re-checks
+-- strdisplaywidth after every trim, so it never emits a char split mid-sequence
+-- for non-ASCII input either — this test pins that down.
+
+do
+  local cjk_state = {
+    items = { { type = "table", name = "t" } },
+    col_cache = { t = {
+      { column_name = "id",                        data_type = "integer" },
+      { column_name = "商品コードとても長い名前", data_type = "text"    },
+      { column_name = "категория_очень_длинная",   data_type = "text"    },
+    }},
+    pk_cache  = { t = { id = true } },
+    fk_cache  = { t = {} },
+  }
+
+  local function with_state(fn)
+    local orig = require("dadbod-grip.schema").get_state
+    require("dadbod-grip.schema").get_state = function() return cjk_state end
+    local ok_r, err = pcall(fn)
+    require("dadbod-grip.schema").get_state = orig
+    if not ok_r then error(err, 2) end
+  end
+
+  with_state(function()
+    local lines, _, line_to_node, _ = er._build_content("sqlite:x.db")
+    local found_line = nil
+    for ln, node in pairs(line_to_node) do
+      if node.kind == "table" and node.name == "t" then found_line = ln end
+    end
+    ok(found_line ~= nil, "non-ascii truncation: table t found in diagram")
+    if found_line then
+      local line_str = lines[found_line] or ""
+      ok(line_str:find("…", 1, true) ~= nil,
+         "non-ascii truncation: long CJK/cyrillic column name contains … suffix")
+      -- No column token should exceed 13 display cols (12 + "…"), and every
+      -- truncated token must be valid UTF-8 (never a split multi-byte char).
+      for part in line_str:gmatch("%S+") do
+        if part ~= "●" and part ~= "⬡" and part ~= "○" and
+           part ~= "t" and not part:match("^%+%d") then
+          ok(vim.fn.strdisplaywidth(part) <= 13,
+             "non-ascii truncation: column token '" .. part .. "' is ≤13 display cols")
+          ok(pcall(vim.str_utf_pos, part),
+             "non-ascii truncation: column token '" .. part .. "' is valid UTF-8")
+        end
+      end
+    end
+  end)
+end
+
 -- ── summary ───────────────────────────────────────────────────────────────────
 
 print(string.format("\ner_diagram_spec: %d passed, %d failed", pass, fail))

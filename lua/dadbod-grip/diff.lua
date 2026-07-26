@@ -176,9 +176,8 @@ local function render_unified(diff_result, left, right, columns, avail_width)
     for _, col in ipairs(columns) do
       local idx = col_idx_map[col]
       local v = idx and row_data[idx] or ""
-      if vim.fn.strdisplaywidth(v) > widths[col] then
-        v = v:sub(1, widths[col] - 1) .. "~"
-      end
+      -- "~" (not ui.lua's default "…") to match this module's established style.
+      v = ui.truncate_display(v, widths[col], true, "~")
       table.insert(parts, pad(v, widths[col]))
     end
     local line = "  " .. table.concat(parts, " | ")
@@ -195,7 +194,11 @@ local function render_unified(diff_result, left, right, columns, avail_width)
   end
 
   add(format_header())
-  add("  " .. string.rep("-", #lines[1] - 2))
+  -- Header cells are padded to display width but never truncated (see
+  -- format_header), so a non-ASCII column name can make the header line's
+  -- byte length exceed its display width. Measure display width, not #s, or
+  -- the separator grows too many dashes for such a header.
+  add("  " .. string.rep("-", vim.fn.strdisplaywidth(lines[1]) - 2))
 
   -- Changed rows (show left then right)
   for _, m in ipairs(diff_result.matched) do
