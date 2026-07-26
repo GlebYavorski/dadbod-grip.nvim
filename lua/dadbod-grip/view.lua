@@ -4327,8 +4327,11 @@ function M._setup_keymaps(bufnr)
 
   -- ── aggregate / column stats / export keymaps ─────────────────────────
 
-  -- ga: aggregate current column (normal: all rows, visual: selected rows)
-  kmap("grid_aggregate", function()
+  -- ga: aggregate current column (normal: all rows, visual: selected rows).
+  -- row_indices = nil means "the whole column". Normal mode must NOT consult
+  -- '< / '>: those marks hold the *previous* visual selection, so ga silently
+  -- aggregated a stale range once the user had selected anything at all.
+  local function aggregate_column(row_indices)
     local session_a = M._sessions[bufnr]
     if not session_a or not session_a._render then return end
     local r = session_a._render
@@ -4355,29 +4358,16 @@ function M._setup_keymaps(bufnr)
       end
     end
 
-    -- Get row range: visual selection or all data rows
-    local start_line = vim.fn.line("'<")
-    local end_line   = vim.fn.line("'>")
-    local ds = r.data_start or 4
-    if start_line == 0 or end_line == 0 then
-      -- No visual selection: aggregate entire column
-      start_line = ds
-      end_line = ds + #r.ordered - 1
-    end
-
     -- Collect values for the single column
+    local targets = row_indices or r.ordered
     local values = {}
     local numeric_values = {}
-    for line = start_line, end_line do
-      local row_order = line - ds + 1
-      if row_order >= 1 and row_order <= #r.ordered then
-        local row_idx = r.ordered[row_order]
-        local val = data.effective_value(st_a, row_idx, col_name)
-        if val ~= nil then
-          table.insert(values, val)
-          local num = tonumber(val)
-          if num then table.insert(numeric_values, num) end
-        end
+    for _, row_idx in ipairs(targets) do
+      local val = data.effective_value(st_a, row_idx, col_name)
+      if val ~= nil then
+        table.insert(values, val)
+        local num = tonumber(val)
+        if num then table.insert(numeric_values, num) end
       end
     end
 
@@ -4403,7 +4393,14 @@ function M._setup_keymaps(bufnr)
     end
 
     vim.notify(table.concat(agg_parts, "  │  "), vim.log.levels.INFO)
-  end, "Aggregate current column")
+  end
+
+  kmap("grid_aggregate", function() aggregate_column(nil) end, "Aggregate current column")
+  kvmap("grid_aggregate", function()
+    local rows_a = get_visual_rows()
+    if not rows_a or #rows_a == 0 then return end
+    aggregate_column(rows_a)
+  end, "Aggregate selected rows in column")
 
   -- gS: column statistics
   kmap("grid_col_stats", function()
