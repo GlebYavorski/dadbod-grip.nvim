@@ -42,14 +42,19 @@ local function ensure_global_grip_dir()
   paths.ensure_dir(vim.fn.expand("~") .. "/.grip")
 end
 
+-- Extensions that DuckDB can query directly (file-as-table).
+local LOCAL_FILE_EXTS = {
+  ".parquet", ".csv", ".tsv", ".json", ".ndjson", ".jsonl",
+  ".xlsx", ".orc", ".arrow", ".ipc",
+}
+
 --- Detect if a URL or path points to a file DuckDB can query directly.
 local function is_file_url(url)
   if not url or url == "" then return false end
   if url:match("^https?://") then return true end
   if url:match("^s3://") then return true end
   local lower = url:lower():gsub("[?#].*$", "")
-  for _, ext in ipairs({ ".parquet", ".csv", ".tsv", ".json", ".ndjson", ".jsonl",
-                          ".xlsx", ".orc", ".arrow", ".ipc" }) do
+  for _, ext in ipairs(LOCAL_FILE_EXTS) do
     if lower:sub(-#ext) == ext then return true end
   end
   return false
@@ -90,12 +95,6 @@ local function fmt_size(bytes)
   if bytes < 1073741824       then return string.format("%.1f MB", bytes / 1048576) end
   return string.format("%.1f GB", bytes / 1073741824)
 end
-
--- Extensions that DuckDB can query directly (local paths only).
-local LOCAL_FILE_EXTS = {
-  ".parquet", ".csv", ".tsv", ".json", ".ndjson", ".jsonl",
-  ".xlsx", ".orc", ".arrow", ".ipc",
-}
 
 --- Scan cwd for supported data files and return them as picker-ready items.
 --- Scans root of cwd and one level of subdirectories (data/, demo/, etc.).

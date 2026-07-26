@@ -53,7 +53,9 @@ function M._render_if_visible(bufnr)
   end
 end
 
--- File extensions DuckDB can query directly (file-as-table).
+-- File extensions :Grip accepts as a file-as-table argument. Deliberately
+-- narrower than connections.LOCAL_FILE_EXTS, which also lists .orc/.arrow/.ipc
+-- for the connection picker's cwd scan.
 local DUCKDB_EXTENSIONS = {
   ".parquet", ".csv", ".tsv", ".json", ".ndjson", ".jsonl", ".xlsx",
 }
