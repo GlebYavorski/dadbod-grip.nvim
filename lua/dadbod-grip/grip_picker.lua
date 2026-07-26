@@ -63,15 +63,35 @@ function M.open(opts)
 
   -- ── filter ──
 
+  -- render() alone calls filtered_items() twice, and several key handlers
+  -- call it again before render() to read the hovered item. Memoize on
+  -- (filter, items): `items` is only ever reassigned wholesale (see
+  -- refresh_fn below), never mutated in place, so reference identity is
+  -- enough to detect a fresh item list. Because the check compares against
+  -- the live `filter`/`items` upvalues rather than a separate "dirty" flag,
+  -- there is no invalidation step that could run too late relative to a
+  -- query edit — any call, from anywhere, recomputes the moment either
+  -- value differs from what produced the cached result.
+  local _cache_filter, _cache_items, _cache_result
+
   local function filtered_items()
-    if filter == "" then return items end
-    local out = {}
-    for _, item in ipairs(items) do
-      if tostring(display(item)):lower():find(filter:lower(), 1, true) then
-        table.insert(out, item)
+    if _cache_filter == filter and _cache_items == items then
+      return _cache_result
+    end
+    local result
+    if filter == "" then
+      result = items
+    else
+      result = {}
+      local needle = filter:lower()
+      for _, item in ipairs(items) do
+        if tostring(display(item)):lower():find(needle, 1, true) then
+          table.insert(result, item)
+        end
       end
     end
-    return out
+    _cache_filter, _cache_items, _cache_result = filter, items, result
+    return result
   end
 
   -- ── buffers ──

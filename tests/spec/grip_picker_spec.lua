@@ -76,6 +76,29 @@ local function close_all_floats()
   end
 end
 
+--- Feed keys for vim.fn.input (used by ui.input under "/") before calling fn.
+--- Same pattern as tests/spec/ui_spec.lua.
+local function answering(keys, fn)
+  vim.api.nvim_feedkeys(
+    vim.api.nvim_replace_termcodes(keys, true, false, true), "L", false)
+  return fn()
+end
+
+--- Names of items currently rendered (in the order they appear).
+local function visible_item_names(buf, names_by_line_frag)
+  local lines = buf_lines(buf)
+  local visible = {}
+  for _, frag in ipairs(names_by_line_frag) do
+    for _, l in ipairs(lines) do
+      if l:find(frag, 1, true) then
+        table.insert(visible, frag)
+        break
+      end
+    end
+  end
+  return visible
+end
+
 -- ── open + basic render ───────────────────────────────────────────────────────
 
 test("open: renders item list in buffer", function()
@@ -430,6 +453,46 @@ test("display function applied to items", function()
     if l:find("custom-label", 1, true) then found = true end
   end
   assert(found, "display function result should appear in buffer")
+  close_all_floats()
+end)
+
+test("filter: cache does not go stale across query A -> B -> A", function()
+  -- Regression test for the filtered_items() memoization: query A must give
+  -- the same result the second time around, and B must differ from A, even
+  -- though every one of these renders shares a cache.
+  local buf = open_picker_capture_buf({
+    title = "Filter",
+    items = { { name = "alpha" }, { name = "abba" }, { name = "beta" } },
+    display = function(item) return item.name end,
+  })
+  assert(buf, "buf should exist")
+
+  -- activate_filter() prefills the prompt with the current filter as
+  -- `default`, so clear it (<C-u>) before typing the new query.
+  local function activate(query)
+    answering("<C-u>" .. query .. "<CR>", function() press(buf, "/") end)
+  end
+
+  -- Query A: "ab" only matches "abba".
+  activate("ab")
+  local a1 = visible_item_names(buf, { "alpha", "abba", "beta" })
+  eq(#a1, 1, "query A should match exactly one item")
+  eq(a1[1], "abba", "query A should match 'abba'")
+
+  -- Query B: "et" only matches "beta". Different result proves the cache
+  -- picked up the new filter instead of replaying A's cached list.
+  activate("et")
+  local b = visible_item_names(buf, { "alpha", "abba", "beta" })
+  eq(#b, 1, "query B should match exactly one item")
+  eq(b[1], "beta", "query B should match 'beta'")
+
+  -- Back to query A: must reproduce the exact first result, proving the
+  -- cache wasn't left pointing at B's list.
+  activate("ab")
+  local a2 = visible_item_names(buf, { "alpha", "abba", "beta" })
+  eq(#a2, 1, "query A (again) should match exactly one item")
+  eq(a2[1], "abba", "query A (again) should match 'abba', same as the first time")
+
   close_all_floats()
 end)
 
