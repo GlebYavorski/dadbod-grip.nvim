@@ -246,6 +246,65 @@ local function _block_under_cursor(bufnr)
 end
 M._block_under_cursor = _block_under_cursor  -- exported for unit tests
 
+--- A line that separates one runnable statement from the next: blank lines, the
+--- hint comment, and the AI separator. sync_query stacks queries separated by a
+--- blank line, so a "statement" is a maximal run of non-separator lines.
+local function _is_stmt_boundary(l)
+  return l:match("^%s*$") ~= nil
+    or l:match("^%-%- C%-CR:") ~= nil
+    or l:match("^%-%- AI generated:") ~= nil
+end
+
+--- Return the single SQL statement to run for the cursor position. A ```sql fence
+--- wins (notebook mode); otherwise the blank-line-delimited paragraph around the
+--- cursor. This keeps C-CR from executing the WHOLE pad — sync_query stacks a new
+--- SELECT each time you jump tables, and running all of them wraps 3 statements in
+--- one subquery → syntax error. Returns nil when the cursor isn't on any statement
+--- (caller falls back to the full buffer, which is correct for a single query).
+local function _stmt_under_cursor(bufnr)
+  local block = _block_under_cursor(bufnr)
+  if block then return block end
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  if #lines == 0 then return nil end
+  local cur = vim.api.nvim_win_get_cursor(0)[1]  -- 1-based
+
+  -- Cursor on a boundary line: attach to the paragraph just above if there is
+  -- one (you just appended/landed at its end), else the next one below.
+  if _is_stmt_boundary(lines[cur]) then
+    local up = cur
+    while up >= 1 and _is_stmt_boundary(lines[up]) do up = up - 1 end
+    if up >= 1 then
+      cur = up
+    else
+      local down = cur
+      while down <= #lines and _is_stmt_boundary(lines[down]) do down = down + 1 end
+      if down > #lines then return nil end
+      cur = down
+    end
+  end
+
+  local s = cur
+  while s > 1 and not _is_stmt_boundary(lines[s - 1]) do s = s - 1 end
+  local e = cur
+  while e < #lines and not _is_stmt_boundary(lines[e + 1]) do e = e + 1 end
+
+  local para = {}
+  for i = s, e do table.insert(para, lines[i]) end
+  local sql = table.concat(para, "\n"):match("^%s*(.-)%s*$")
+  if sql == "" then return nil end
+  return sql
+end
+M._stmt_under_cursor = _stmt_under_cursor  -- exported for unit tests
+
+--- The SQL a C-CR should run from the pad: the statement under the cursor when
+--- there is one, else the whole pad (single-query case).
+local function _pad_sql_to_run(bufnr)
+  local stmt = _stmt_under_cursor(bufnr)
+  if stmt and stmt:match("%S") then return stmt end
+  return M.get_content()
+end
+
 --- Scan the project root for .md and .sql files to use as notebooks.
 local function scan_notebooks()
   -- Walk up from cwd to find project root (same pattern as connections.lua)
@@ -298,32 +357,22 @@ local function setup_keymaps(bufnr, url)
     vim.keymap.set(mode, key, fn, o)
   end
 
-  -- qpad_execute: block-under-cursor takes priority; fall back to full buffer
+  -- qpad_execute: statement-under-cursor takes priority; fall back to full buffer
   kmap("qpad_execute", "n", function()
-    local block = _block_under_cursor(bufnr)
-    if block and block:match("%S") then
-      run_sql(cur_url(), block)
-      return
-    end
-    local sql = M.get_content()
+    local sql = _pad_sql_to_run(bufnr)
     if sql then run_sql(cur_url(), sql) end
   end, { desc = "Grip: run query or SQL block under cursor" })
 
-  -- qpad_execute in insert mode too
+  -- qpad_execute in insert mode too (same statement-under-cursor semantics)
   kmap("qpad_execute", "i", function()
     vim.cmd("stopinsert")
-    local sql = M.get_content()
+    local sql = _pad_sql_to_run(bufnr)
     if sql then run_sql(cur_url(), sql) end
   end, { desc = "Grip: run query" })
 
   -- qpad_execute_new: always open results in a new split (never reuse)
   kmap("qpad_execute_new", "n", function()
-    local block = _block_under_cursor(bufnr)
-    if block and block:match("%S") then
-      run_sql(cur_url(), block, true)
-      return
-    end
-    local sql = M.get_content()
+    local sql = _pad_sql_to_run(bufnr)
     if sql then run_sql(cur_url(), sql, true) end
   end, { desc = "Grip: run query in new split" })
 

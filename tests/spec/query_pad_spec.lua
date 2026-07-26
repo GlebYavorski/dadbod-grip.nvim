@@ -244,5 +244,89 @@ do
   close_win(w)
 end
 
+-- ── _stmt_under_cursor ────────────────────────────────────────────────────────
+-- Regression: jumping between tables makes sync_query stack SELECTs separated by
+-- a blank line. C-CR must run ONLY the statement under the cursor, not the whole
+-- pad (which would wrap 3 statements in one subquery → syntax error).
+
+do
+  -- three stacked queries; cursor in the second → returns only the second
+  local lines = {
+    'SELECT * FROM "Organization"',
+    "",
+    'SELECT * FROM "OrganizationPermission"',
+    "",
+    'SELECT * FROM "PartnerIntegrationOrganization"',
+  }
+  local b, w = buf_with_cursor(lines, 3)
+  eq(qp._stmt_under_cursor(b), 'SELECT * FROM "OrganizationPermission"',
+    "stmt_under_cursor: returns only the paragraph under the cursor")
+  close_win(w)
+end
+
+do
+  -- cursor on the last stacked query
+  local lines = {
+    'SELECT * FROM "a"',
+    "",
+    'SELECT * FROM "b"',
+  }
+  local b, w = buf_with_cursor(lines, 3)
+  eq(qp._stmt_under_cursor(b), 'SELECT * FROM "b"', "stmt_under_cursor: last statement")
+  close_win(w)
+end
+
+do
+  -- a single multi-line statement (no blank lines) → the whole thing
+  local lines = { "SELECT *", 'FROM "t"', "WHERE x = 1" }
+  local b, w = buf_with_cursor(lines, 2)
+  eq(qp._stmt_under_cursor(b), 'SELECT *\nFROM "t"\nWHERE x = 1',
+    "stmt_under_cursor: multi-line statement kept intact")
+  close_win(w)
+end
+
+do
+  -- cursor on the blank separator line attaches to the statement above
+  local lines = { 'SELECT * FROM "a"', "", 'SELECT * FROM "b"' }
+  local b, w = buf_with_cursor(lines, 2)
+  eq(qp._stmt_under_cursor(b), 'SELECT * FROM "a"',
+    "stmt_under_cursor: boundary line attaches to the paragraph above")
+  close_win(w)
+end
+
+do
+  -- leading blank line: cursor there attaches to the statement below
+  local lines = { "", 'SELECT * FROM "only"' }
+  local b, w = buf_with_cursor(lines, 1)
+  eq(qp._stmt_under_cursor(b), 'SELECT * FROM "only"',
+    "stmt_under_cursor: leading boundary falls through to statement below")
+  close_win(w)
+end
+
+do
+  -- the hint comment is a boundary, not part of the statement
+  local lines = { "-- C-CR:run block or buffer", 'SELECT * FROM "t"' }
+  local b, w = buf_with_cursor(lines, 2)
+  eq(qp._stmt_under_cursor(b), 'SELECT * FROM "t"',
+    "stmt_under_cursor: hint line excluded from the statement")
+  close_win(w)
+end
+
+do
+  -- a ```sql fence still wins over paragraph detection
+  local lines = { "```sql", "SELECT 1", "```" }
+  local b, w = buf_with_cursor(lines, 2)
+  eq(qp._stmt_under_cursor(b), "SELECT 1", "stmt_under_cursor: markdown fence takes priority")
+  close_win(w)
+end
+
+do
+  -- empty / hint-only buffer → nil (caller falls back to get_content)
+  local lines = { "-- C-CR:run block or buffer", "" }
+  local b, w = buf_with_cursor(lines, 1)
+  eq(qp._stmt_under_cursor(b), nil, "stmt_under_cursor: no real statement returns nil")
+  close_win(w)
+end
+
 print(string.format("\nquery_pad_spec: %d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
