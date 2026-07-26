@@ -434,6 +434,33 @@ local function strip_flags(url)
   return vim.trim(url)
 end
 
+--- Upsert a connection by URL into an in-memory list: renames in place if the
+--- URL is already present, otherwise inserts a new entry. Pure (no I/O) so it
+--- can be shared by M.add() and M.switch()'s single-read/single-write path.
+local function upsert_conn(conns, name, url)
+  for _, c in ipairs(conns) do
+    if c.url == url then
+      c.name = name
+      if is_file_url(url) then c.type = "file" end
+      return
+    end
+  end
+  local conn_type = is_file_url(url) and "file" or nil
+  table.insert(conns, { name = name, url = url, type = conn_type })
+end
+
+--- Update last_used on a matching entry in an in-memory list (MRU tracking).
+--- Pure (no I/O). Returns true when a match was found and updated.
+local function touch_conn(conns, url)
+  for _, c in ipairs(conns) do
+    if c.url == url then
+      c.last_used = os.time()
+      return true
+    end
+  end
+  return false
+end
+
 --- Add (or rename) a connection in .grip/connections.json.
 --- Upsert by URL: if the URL already exists, updates name and type in place,
 --- preserving last_used and attachments. Prevents accumulation of duplicates
@@ -441,16 +468,7 @@ end
 function M.add(name, url)
   local clean_url = strip_flags(url)
   local conns = read_local_connections()
-  for _, c in ipairs(conns) do
-    if c.url == clean_url then
-      c.name = name
-      if is_file_url(clean_url) then c.type = "file" end
-      write_file_connections(conns)
-      return
-    end
-  end
-  local conn_type = is_file_url(clean_url) and "file" or nil
-  table.insert(conns, { name = name, url = clean_url, type = conn_type })
+  upsert_conn(conns, name, clean_url)
   write_file_connections(conns)
 end
 
@@ -458,15 +476,9 @@ end
 function M.touch(url)
   local clean = strip_flags(url)
   local conns = read_local_connections()
-  local changed = false
-  for _, c in ipairs(conns) do
-    if c.url == clean then
-      c.last_used = os.time()
-      changed = true
-      break
-    end
+  if touch_conn(conns, clean) then
+    write_file_connections(conns)
   end
-  if changed then write_file_connections(conns) end
 end
 
 --- Remove a connection from .grip/connections.json by name.
@@ -488,12 +500,26 @@ end
 function M.switch(url, name, conn_type, opts)
   -- Strip session-only flags: they must never reach the connection registry
   url = strip_flags(url)
-  -- Resolve type: param > stored connections > auto-detect.
-  -- Read local+global here (read-only: no write risk).
-  local all_conns = read_file_connections()
+
+  -- Single read of the local file; everything below (type resolution,
+  -- rename/insert, MRU touch) mutates this same in-memory list, and it is
+  -- written back at most once at the end instead of once per mutation.
+  local local_conns = read_local_connections()
+
+  -- Resolve type: param > local connections > global connections > auto-detect.
+  -- The global file is only read when actually needed for the lookup, since
+  -- most callers already pass conn_type or have a locally-known type.
   local resolved_type = conn_type
   if not resolved_type then
-    for _, c in ipairs(all_conns) do
+    for _, c in ipairs(local_conns) do
+      if c.url == url and c.type then
+        resolved_type = c.type
+        break
+      end
+    end
+  end
+  if not resolved_type and not configured_connections_path() then
+    for _, c in ipairs(read_json_connections(global_connections_path(), "global")) do
       if c.url == url and c.type then
         resolved_type = c.type
         break
@@ -504,16 +530,22 @@ function M.switch(url, name, conn_type, opts)
     resolved_type = "file"
   end
 
-  -- Always upsert when a name is provided. M.add() handles both insert (new
+  -- Always upsert when a name is provided. This handles both insert (new
   -- URL) and rename (existing URL with a stale generic name like "vim.g.db").
-  -- Without this, already_saved=true would skip M.add and the rename never
-  -- happens even when switching with the correct name.
-  local local_conns = read_local_connections()
+  -- Without this, an already-saved URL would keep a stale name forever even
+  -- when switching with the correct one.
+  local changed = false
   if name and name ~= "" then
-    M.add(name, url)
+    upsert_conn(local_conns, name, url)
+    changed = true
   end
-  -- Touch AFTER upsert so first-time connections get last_used stamped
-  M.touch(url)
+  -- Touch AFTER upsert so first-time connections get last_used stamped.
+  if touch_conn(local_conns, url) then
+    changed = true
+  end
+  if changed then
+    write_file_connections(local_conns)
+  end
 
   if resolved_type == "file" then
     vim.notify("Grip: opening " .. (name or url), vim.log.levels.INFO)

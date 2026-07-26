@@ -6,6 +6,11 @@ local paths = require("dadbod-grip.paths")
 local M = {}
 
 local MAX_ENTRIES = 500
+-- Amortized trim: only rewrite the whole file once it has grown to 1.5x the
+-- cap, instead of re-trimming on every single record(). The file can exceed
+-- MAX_ENTRIES between compactions, but readers always cap at MAX_ENTRIES
+-- (see M._read_all), so nobody observes more history than the limit promises.
+local TRIM_THRESHOLD = math.floor(MAX_ENTRIES * 1.5)
 
 -- ── storage helpers ─────────────────────────────────────────────────────
 
@@ -24,6 +29,13 @@ function M._redact_url(url)
 end
 
 --- Read all history entries from disk. Mockable via M._read_all.
+--- A malformed or partial line (e.g. left by a torn append) is silently
+--- skipped rather than raising, so a half-written last line never breaks
+--- reads of everything recorded before it.
+--- Always caps the result at MAX_ENTRIES: M.record() only compacts the file
+--- amortized (see TRIM_THRESHOLD), so the file can briefly hold more lines
+--- than the limit. Enforcing the cap here means every reader (M.list,
+--- M.get_for_table) sees at most MAX_ENTRIES regardless of on-disk overshoot.
 function M._read_all()
   local path = history_path()
   if vim.fn.filereadable(path) == 0 then return {} end
@@ -37,10 +49,20 @@ function M._read_all()
       end
     end
   end
+  if #entries > MAX_ENTRIES then
+    local capped = {}
+    for i = #entries - MAX_ENTRIES + 1, #entries do
+      table.insert(capped, entries[i])
+    end
+    entries = capped
+  end
   return entries
 end
 
---- Write all history entries to disk. Mockable via M._write_all.
+--- Write all history entries to disk, replacing the file. Mockable via
+--- M._write_all. Used by M.clear() and by M.record()'s amortized compaction
+--- (both dedup-update and over-threshold trim need to rewrite, since they
+--- change something other than "append one line at the end").
 function M._write_all(entries)
   ensure_dir()
   local lines = {}
@@ -48,6 +70,36 @@ function M._write_all(entries)
     table.insert(lines, vim.fn.json_encode(e))
   end
   vim.fn.writefile(lines, history_path())
+end
+
+--- Read just the last stored entry without loading the whole file. Used by
+--- M.record() to check for consecutive-dedup cheaply. Mockable via
+--- M._read_last. Returns nil on a missing file or an unparsable last line.
+function M._read_last()
+  local path = history_path()
+  if vim.fn.filereadable(path) == 0 then return nil end
+  local lines = vim.fn.readfile(path, "", -1)
+  if #lines == 0 or lines[1] == "" then return nil end
+  local ok, entry = pcall(vim.fn.json_decode, lines[1])
+  if ok and type(entry) == "table" then return entry end
+  return nil
+end
+
+--- Append a single entry as one JSONL line, without touching existing
+--- content. Mockable via M._append_one. This is the hot path for M.record():
+--- one small write instead of a full read-modify-write of the whole file.
+function M._append_one(entry)
+  ensure_dir()
+  vim.fn.writefile({ vim.fn.json_encode(entry) }, history_path(), "a")
+end
+
+--- Number of lines currently on disk, without decoding them. Used by
+--- M.record() to decide whether the amortized trim is due. Mockable via
+--- M._count_lines.
+function M._count_lines()
+  local path = history_path()
+  if vim.fn.filereadable(path) == 0 then return 0 end
+  return #vim.fn.readfile(path)
 end
 
 -- ── public API ──────────────────────────────────────────────────────────
@@ -68,32 +120,33 @@ function M.record(opts)
     elapsed_ms = opts.elapsed_ms,
   }
 
-  local all = M._read_all()
-
-  -- Consecutive dedup: same SQL + URL just updates timestamp
-  if #all > 0 then
-    local last = all[#all]
-    if last.sql == entry.sql and last.url == entry.url then
+  -- Consecutive dedup: same SQL + URL just updates the existing last line's
+  -- timestamp. Checked via M._read_last() (last line only) so the common
+  -- case below doesn't need to read the whole file just to compare.
+  local last = M._read_last()
+  if last and last.sql == entry.sql and last.url == entry.url then
+    -- Updating an existing line (not appending a new one) requires a full
+    -- rewrite; this only happens on repeats of the same query, not on
+    -- every record().
+    local all = M._read_all()
+    if #all > 0 then
       all[#all].ts = entry.ts
       all[#all].elapsed_ms = entry.elapsed_ms
-      M._write_all(all)
-      return
     end
+    M._write_all(all)
+    return
   end
 
-  -- Append
-  table.insert(all, entry)
+  -- Common case: append one line, no read of the existing file needed.
+  M._append_one(entry)
 
-  -- Trim oldest if over cap
-  if #all > MAX_ENTRIES then
-    local trimmed = {}
-    for i = #all - MAX_ENTRIES + 1, #all do
-      table.insert(trimmed, all[i])
-    end
-    all = trimmed
+  -- Amortized trim: only rewrite the whole file once it has overshot the
+  -- cap by a comfortable margin, instead of re-trimming on every append.
+  -- M._read_all() already caps at MAX_ENTRIES, so rewriting its result is
+  -- both the trim and the compaction in one step.
+  if M._count_lines() > TRIM_THRESHOLD then
+    M._write_all(M._read_all())
   end
-
-  M._write_all(all)
 end
 
 --- List recent history entries, newest first.
