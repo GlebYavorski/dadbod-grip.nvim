@@ -9,6 +9,64 @@ function M.border()
   return require("dadbod-grip").get_opts().border
 end
 
+--- Open an editor-relative float and return its window and buffer.
+---
+--- Covers only what the info floats across the plugin share: a scratch buffer,
+--- centered geometry, style = "minimal" and the configured border. Sizing rules
+--- stay with the caller — every float has its own idea of how wide it should be.
+--- Keys left nil are not passed to nvim_open_win at all, so a caller that never
+--- set `title`/`zindex` keeps the stock window it had before.
+---
+--- @param opts table
+---   lines      string[]|nil  fill a fresh scratch buffer with these
+---   buf        integer|nil   use this buffer instead of creating one (pass it
+---                            when buffer options must be set before the window
+---                            exists, e.g. filetype)
+---   width      integer       required
+---   height     integer       required
+---   relative   string|nil    default "editor"
+---   row, col   integer|nil   default: centered for width/height
+---   enter      boolean|nil   focus the float (default true)
+---   style, border, title, title_pos, zindex, footer, footer_pos
+---                            forwarded as-is; style/border default to
+---                            "minimal" / M.border()
+--- @return integer win, integer buf
+function M.info_float(opts)
+  local buf = opts.buf
+  if not buf then
+    buf = vim.api.nvim_create_buf(false, true)
+    if opts.lines then
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, opts.lines)
+    end
+  end
+
+  local cfg = {
+    relative  = opts.relative or "editor",
+    width     = opts.width,
+    height    = opts.height,
+    row       = opts.row or math.floor((vim.o.lines   - opts.height) / 2),
+    col       = opts.col or math.floor((vim.o.columns - opts.width) / 2),
+    style     = opts.style or "minimal",
+    border    = opts.border or M.border(),
+    title     = opts.title,
+    title_pos = opts.title_pos,
+    zindex    = opts.zindex,
+  }
+
+  local enter = opts.enter ~= false
+
+  -- A footer needs a border; fall back silently when nvim rejects the config
+  -- (border = "none").
+  if opts.footer then
+    local with_footer = vim.tbl_extend("force", cfg,
+      { footer = opts.footer, footer_pos = opts.footer_pos })
+    local ok, win = pcall(vim.api.nvim_open_win, buf, enter, with_footer)
+    if ok then return win, buf end
+  end
+
+  return vim.api.nvim_open_win(buf, enter, cfg), buf
+end
+
 --- Show an animated spinner float, run fn(), then clear the float.
 ---
 --- IMPORTANT: fn() must be synchronous OR use vim.wait() for async work.

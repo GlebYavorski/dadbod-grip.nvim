@@ -289,14 +289,13 @@ function M.show_error(title, lines)
     end
   end
 
-  local float_win = vim.api.nvim_open_win(err_buf, true, {
-    relative = "editor",
+  local float_win = ui.info_float({
+    buf = err_buf,
+    -- Row accounts for the border and the caller's expectation of a bit of
+    -- headroom, so it is not the plain vertical center of `height`.
     row = math.floor((vim.o.lines - #lines - 4) / 2),
-    col = math.floor((vim.o.columns - width) / 2),
     width = width,
     height = #lines,
-    style = "minimal",
-    border = ui.border(),
     title = " " .. (title or "Error") .. " ",
     title_pos = "center",
     zindex = 70,

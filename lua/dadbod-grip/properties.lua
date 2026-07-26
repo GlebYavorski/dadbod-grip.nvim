@@ -219,17 +219,10 @@ function M.open(table_name, url, grip_win)
   local width = math.min(math.max(max_w + 4, 50), vim.o.columns - 10)
   local height = math.min(#lines, math.floor(vim.o.lines * 0.8))
 
-  local popup_buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(popup_buf, 0, -1, false, lines)
-
-  local win = vim.api.nvim_open_win(popup_buf, true, {
-    relative = "editor",
-    row = math.floor((vim.o.lines - height) / 2),
-    col = math.floor((vim.o.columns - width) / 2),
+  local win, popup_buf = ui.info_float({
+    lines = lines,
     width = width,
     height = height,
-    style = "minimal",
-    border = ui.border(),
     title = " Table Properties ",
     title_pos = "center",
     zindex = 50,

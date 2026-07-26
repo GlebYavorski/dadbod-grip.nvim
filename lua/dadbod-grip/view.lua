@@ -1583,29 +1583,28 @@ local function open_info_float(grip_win, lines, float_opts)
   local height = float_opts.height or math.min(#flat, 30)
   local relative = float_opts.relative or "editor"
 
+  -- Editor-relative floats are centered by ui.info_float (row/col left nil).
   local row, col
   if relative == "cursor" then
     row = float_opts.row or 1
     col = float_opts.col or 0
-  else
-    row = math.floor((vim.o.lines - height) / 2)
-    col = math.floor((vim.o.columns - width) / 2)
   end
 
+  -- Buffer is created here, not by info_float: filetype must be set before the
+  -- window exists so FileType autocmds see the same state as before.
   local popup_buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(popup_buf, 0, -1, false, flat)
   if float_opts.filetype then
     vim.api.nvim_set_option_value("filetype", float_opts.filetype, { buf = popup_buf })
   end
 
-  local win = vim.api.nvim_open_win(popup_buf, true, {
+  local win = ui.info_float({
+    buf = popup_buf,
     relative = relative,
     row = row,
     col = col,
     width = width,
     height = height,
-    style = "minimal",
-    border = ui.border(),
     title = float_opts.title or "",
     title_pos = "center",
     zindex = 50,

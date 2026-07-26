@@ -523,13 +523,8 @@ function M.show(url, scroll_to, opts)
   local max_h = math.floor(vim.o.lines   * 0.85)
   local width  = math.min(content_w + 2, max_w)
   local height = math.min(content_h, max_h)
-  local row    = math.floor((vim.o.lines   - height) / 2)
-  local col    = math.floor((vim.o.columns - width)  / 2)
 
-  local winid = vim.api.nvim_open_win(bufnr, true, {
-    relative = "editor", style = "minimal", border = ui.border(),
-    width = width, height = height, row = row, col = col,
-  })
+  local winid = ui.info_float({ buf = bufnr, width = width, height = height })
   vim.wo[winid].wrap       = false
   vim.wo[winid].cursorline = true
 

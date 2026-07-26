@@ -242,24 +242,16 @@ function M.open(value, opts)
 
   local lines = render()
   local width, height = win_size(lines)
-  local base_cfg = {
-    relative  = "editor",
-    row       = math.floor((vim.o.lines - height) / 2),
-    col       = math.floor((vim.o.columns - width) / 2),
-    width     = width,
-    height    = height,
-    style     = "minimal",
-    border    = ui.border(),
-    title     = opts.title or " JSON ",
-    title_pos = "center",
-    zindex    = 60,
-  }
-  -- Footer needs a border; fall back silently for border = "none".
-  local ok, win = pcall(vim.api.nvim_open_win, buf, true,
-    vim.tbl_extend("force", base_cfg, { footer = FOOTER, footer_pos = "center" }))
-  if not ok then
-    win = vim.api.nvim_open_win(buf, true, base_cfg)
-  end
+  local win = ui.info_float({
+    buf        = buf,
+    width      = width,
+    height     = height,
+    title      = opts.title or " JSON ",
+    title_pos  = "center",
+    zindex     = 60,
+    footer     = FOOTER,
+    footer_pos = "center",
+  })
   vim.wo[win].cursorline = true
 
   local function close()
