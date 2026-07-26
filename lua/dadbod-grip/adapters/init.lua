@@ -70,4 +70,40 @@ function M.resolve(url)
   return nil, "Unsupported database scheme: " .. scheme
 end
 
+-- Human-readable adapter names, keyed by the kind M.kind() returns.
+local DISPLAY_NAMES = {
+  postgresql = "PostgreSQL",
+  mysql      = "MySQL",
+  sqlite     = "SQLite",
+  duckdb     = "DuckDB",
+  sqlserver  = "SQL Server",
+}
+
+--- Canonical adapter kind for a connection URL: "postgresql", "mysql",
+--- "sqlite", "duckdb" or "sqlserver". Derived from SCHEME_MAP, so scheme
+--- aliases (postgres, mariadb, mssql) collapse onto the owning adapter and
+--- adding an adapter there is enough to teach every caller about it.
+--- The bare "scheme:" form is accepted alongside "scheme://".
+--- @param url string|nil
+--- @return string|nil kind  nil when the scheme is unknown
+function M.kind(url)
+  if not url or url == "" then return nil end
+  local u = url:lower()
+  for prefix, mod_name in pairs(SCHEME_MAP) do
+    local scheme = prefix:match("^([^:]+):")
+    if scheme and u:sub(1, #scheme + 1) == scheme .. ":" then
+      return mod_name:match("([^.]+)$")
+    end
+  end
+  return nil
+end
+
+--- Human-readable adapter name for a connection URL ("PostgreSQL", ...).
+--- @param url string|nil
+--- @return string|nil  nil when the scheme is unknown
+function M.display_name(url)
+  local kind = M.kind(url)
+  return kind and DISPLAY_NAMES[kind] or nil
+end
+
 return M

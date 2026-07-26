@@ -243,14 +243,8 @@ function M.build_schema_context(url, question)
   local tables, err = db.list_tables(url)
   if not tables then return "", "unknown" end
 
-  -- Detect adapter name
-  local adapter_name = "SQL"
-  local u = (url or ""):lower()
-  if u:match("^postgres") then adapter_name = "PostgreSQL"
-  elseif u:match("^mysql") or u:match("^mariadb") then adapter_name = "MySQL"
-  elseif u:match("^sqlite") then adapter_name = "SQLite"
-  elseif u:match("^duckdb") then adapter_name = "DuckDB"
-  end
+  -- Detect adapter name (generic "SQL" when no adapter claims the scheme)
+  local adapter_name = require("dadbod-grip.adapters").display_name(url) or "SQL"
 
   -- Extract table names (adapters return different formats)
   local table_names = {}

@@ -1620,13 +1620,7 @@ function M.setup(opts)
 
   --- Detect adapter type from connection URL.
   local function detect_adapter(url)
-    if not url then return "unknown" end
-    local u = url:lower()
-    if u:match("^postgres") then return "postgresql" end
-    if u:match("^mysql") or u:match("^mariadb") then return "mysql" end
-    if u:match("^duckdb") then return "duckdb" end
-    if u:match("^sqlite") then return "sqlite" end
-    return "unknown"
+    return require("dadbod-grip.adapters").kind(url) or "unknown"
   end
 
   --- Parse EXPLAIN output into structured nodes.
@@ -2497,12 +2491,9 @@ function M.do_fill_rows(n)
   if not ok_fk then fks = {} end
   local ddl     = ai_mod._format_ddl_line(tbl, cols or {}, pks or {}, fks)
 
-  -- Detect adapter for value-format hints.
-  local u = (db_url or ""):lower()
-  local adapter = u:match("^postgres") and "PostgreSQL"
-                or u:match("^mysql")   and "MySQL"
-                or u:match("^duckdb")  and "DuckDB"
-                or "SQLite"
+  -- Detect adapter for value-format hints. SQLite stays the fallback for
+  -- URLs no adapter claims (its value syntax is the most permissive).
+  local adapter = require("dadbod-grip.adapters").display_name(db_url) or "SQLite"
 
   ui.blocking("Generating " .. n .. " row(s)...", function()
     local done = false
