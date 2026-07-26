@@ -5305,7 +5305,11 @@ function M.show_help(opts)
     -- Full help highlights: logo, section headers, keymap keys, separators, RO box, portal
     local ns_h = vim.api.nvim_create_namespace("grip_help_hl")
     local function hadd(ln, group, s, e)
-      vim.api.nvim_buf_add_highlight(popup_buf, ns_h, group, ln, s or 0, e or -1)
+      -- Missing or negative end column means "to the end of the line": add_highlight
+      -- took col_end = -1 for that, set_extmark wants end_row = ln + 1 / end_col = 0.
+      local opts = { hl_group = group }
+      if e and e >= 0 then opts.end_col = e else opts.end_row, opts.end_col = ln + 1, 0 end
+      vim.api.nvim_buf_set_extmark(popup_buf, ns_h, ln, s or 0, opts)
     end
     local in_ro_box = false
     for i, line in ipairs(help) do

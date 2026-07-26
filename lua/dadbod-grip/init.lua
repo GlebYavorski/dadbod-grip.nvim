@@ -1345,19 +1345,26 @@ function M.open_welcome()
   vim.api.nvim_buf_clear_namespace(welcome_buf, ns_w, 0, -1)
   vim.schedule(function()
     if not vim.api.nvim_buf_is_valid(welcome_buf) then return end
+    -- Byte-range highlight helper; matches the defaults of the (deprecated)
+    -- add_highlight it replaces: priority 4096, no hl_eol.
+    local function hl_range(row, group, col, end_col)
+      vim.api.nvim_buf_set_extmark(welcome_buf, ns_w, row, col, {
+        end_col = end_col, hl_group = group,
+      })
+    end
     for i, line in ipairs(logo) do
       local ln  = i - 1
       local len = #line
       if line:sub(3, 8) == "──" then
         -- Section headers and bottom separator
-        vim.api.nvim_buf_add_highlight(welcome_buf, ns_w, "Comment", ln, 0, len)
+        hl_range(ln, "Comment", 0, len)
       elseif line:sub(3, 5) == "╔" or line:sub(3, 5) == "║" or line:sub(3, 5) == "╚" then
         -- Logo box lines (╔ ║ ╚)
-        vim.api.nvim_buf_add_highlight(welcome_buf, ns_w, "Special", ln, 0, len)
+        hl_range(ln, "Special", 0, len)
         local vs = line:find("dadbod-grip", 1, true)
-        if vs then vim.api.nvim_buf_add_highlight(welcome_buf, ns_w, "Title", ln, vs - 1, len) end
+        if vs then hl_range(ln, "Title", vs - 1, len) end
       elseif line:find("Editable database", 1, true) then
-        vim.api.nvim_buf_add_highlight(welcome_buf, ns_w, "Comment", ln, 0, len)
+        hl_range(ln, "Comment", 0, len)
       elseif line:find("= modified", 1, true) then
         -- Color legend: extmark with high priority so it shows above any syntax highlighting
         local function hl_phrase(phrase, hl)
@@ -1374,27 +1381,27 @@ function M.open_welcome()
       elseif line:sub(3, 7) == ":Grip" then
         -- :Grip command examples
         local s, e = line:find(":Grip%S*")
-        if s then vim.api.nvim_buf_add_highlight(welcome_buf, ns_w, "Statement", ln, s - 1, e) end
+        if s then hl_range(ln, "Statement", s - 1, e) end
         s, e = line:find("%-%-%S+")
-        if s then vim.api.nvim_buf_add_highlight(welcome_buf, ns_w, "Identifier", ln, s - 1, e) end
+        if s then hl_range(ln, "Identifier", s - 1, e) end
       elseif line:sub(1, 2) == "  " and line:sub(3, 3) ~= " " and line:sub(3, 3) ~= "" then
         -- Keymap lines: highlight left key and right key (two-column layout)
         local _, after = line:match("^  (%S+)()")
         if after then
-          vim.api.nvim_buf_add_highlight(welcome_buf, ns_w, "Identifier", ln, 2, after - 1)
+          hl_range(ln, "Identifier", 2, after - 1)
         end
         -- Right-column key: consistently at byte 31 (0-indexed). Guard: line must be long
         -- enough and that position must be non-space (single-column lines are too short).
         if #line >= 34 and line:sub(32, 32) ~= " " then
           local rs, re = line:find("%S+", 32)
           if rs then
-            vim.api.nvim_buf_add_highlight(welcome_buf, ns_w, "Identifier", ln, rs - 1, re)
+            hl_range(ln, "Identifier", rs - 1, re)
           end
         end
       end
       -- ·NULL· token: highlight wherever it appears, regardless of which branch fired above
       local ns, ne = line:find("·NULL·", 1, true)
-      if ns then vim.api.nvim_buf_add_highlight(welcome_buf, ns_w, "GripNullStaged", ln, ns - 1, ne) end
+      if ns then hl_range(ln, "GripNullStaged", ns - 1, ne) end
     end
   end)
 
@@ -1579,6 +1586,8 @@ end
 ---@param opts? DadbodGripOpts
 function M.setup(opts)
   opts = opts or {}
+  -- Deliberately the old table form of vim.validate: the per-argument signature
+  -- (vim.validate("name", value, "type")) needs Neovim 0.11, we support 0.10.
   vim.validate({
     limit         = { opts.limit,         "number",  true },
     max_col_width = { opts.max_col_width,  "number",  true },

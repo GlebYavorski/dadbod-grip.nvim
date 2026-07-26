@@ -435,25 +435,42 @@ end
 local function apply_highlights(bufnr, lines, line_to_node)
   vim.api.nvim_buf_clear_namespace(bufnr, _ns, 0, -1)
 
+  -- Byte-range highlight; same defaults as the deprecated add_highlight
+  -- it replaces (priority 4096, no hl_eol).
+  local function hl_range(row, group, col, end_col)
+    vim.api.nvim_buf_set_extmark(bufnr, _ns, row, col, {
+      end_col = end_col, hl_group = group,
+    })
+  end
+
+  -- Whole line. add_highlight took col_end = -1 for this and stored it as
+  -- end_row = row + 1 / end_col = 0; set_extmark rejects end_col = -1, so spell that
+  -- range out (it also works for empty lines and for the last line of the buffer).
+  local function hl_line(row, group)
+    vim.api.nvim_buf_set_extmark(bufnr, _ns, row, 0, {
+      end_row = row + 1, end_col = 0, hl_group = group,
+    })
+  end
+
   for i, line in ipairs(lines) do
     local node = line_to_node[i] or {}
     local kind = node.kind or ""
     local row  = i - 1  -- 0-indexed for nvim API
 
     if kind == "title" then
-      vim.api.nvim_buf_add_highlight(bufnr, _ns, "GripHeader", row, 0, -1)
+      hl_line(row, "GripHeader")
 
     elseif kind == "sep" then
-      vim.api.nvim_buf_add_highlight(bufnr, _ns, "GripBorder", row, 0, -1)
+      hl_line(row, "GripBorder")
 
     elseif kind == "hint" then
-      vim.api.nvim_buf_add_highlight(bufnr, _ns, "GripReadonly", row, 0, -1)
+      hl_line(row, "GripReadonly")
 
     elseif kind == "table" then
       -- Dim the tree prefix (├──, └──, │ and spaces before the table name)
       local prefix_len = node.prefix_len or 0
       if prefix_len > 0 then
-        vim.api.nvim_buf_add_highlight(bufnr, _ns, "GripReadonly", row, 0, prefix_len)
+        hl_range(row, "GripReadonly", 0, prefix_len)
       end
 
       -- Highlight column indicators (each UTF-8 symbol is 3 bytes)
@@ -462,7 +479,7 @@ local function apply_highlights(bufnr, lines, line_to_node)
         while true do
           local s = line:find(ch, pos, true)
           if not s then break end
-          vim.api.nvim_buf_add_highlight(bufnr, _ns, hl_group, row, s - 1, s + 2)
+          hl_range(row, hl_group, s - 1, s + 2)
           pos = s + 3
         end
       end
@@ -543,7 +560,10 @@ function M.show(url, scroll_to, opts)
     vim.api.nvim_buf_set_lines(bufnr, 1, 2, false, { bc })
     vim.bo[bufnr].modifiable = false
     if bc ~= "" then
-      vim.api.nvim_buf_add_highlight(bufnr, _ns, "GripReadonly", 1, 0, -1)
+      -- Whole breadcrumb line: end_row/end_col spell out the old col_end = -1
+      vim.api.nvim_buf_set_extmark(bufnr, _ns, 1, 0, {
+        end_row = 2, end_col = 0, hl_group = "GripReadonly",
+      })
     end
   end
 

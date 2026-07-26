@@ -517,7 +517,12 @@ local function render(state)
   local ns = vim.api.nvim_create_namespace("grip_schema")
   vim.api.nvim_buf_clear_namespace(_sidebar_bufnr, ns, 0, -1)
   for _, hl in ipairs(highlights) do
-    pcall(vim.api.nvim_buf_add_highlight, _sidebar_bufnr, ns, hl.hl, hl.line, hl.col, hl.end_col)
+    -- Ranges are byte offsets into lines[hl.line + 1]; add_highlight used to
+    -- clamp them silently, set_extmark raises instead, so clamp before asking.
+    local line_len = #(lines[hl.line + 1] or "")
+    pcall(vim.api.nvim_buf_set_extmark, _sidebar_bufnr, ns, hl.line, math.min(hl.col, line_len), {
+      end_col = math.min(hl.end_col, line_len), hl_group = hl.hl,
+    })
   end
 end
 
@@ -1079,7 +1084,11 @@ local function setup_keymaps(url)
     -- Full schema help highlights
     local ns_sh = vim.api.nvim_create_namespace("grip_schema_help_hl")
     local function sadd(ln, group, s, e)
-      vim.api.nvim_buf_add_highlight(popup_buf, ns_sh, group, ln, s or 0, e or -1)
+      -- Missing or negative end column means "to the end of the line": add_highlight
+      -- took col_end = -1 for that, set_extmark wants end_row = ln + 1 / end_col = 0.
+      local opts = { hl_group = group }
+      if e and e >= 0 then opts.end_col = e else opts.end_row, opts.end_col = ln + 1, 0 end
+      vim.api.nvim_buf_set_extmark(popup_buf, ns_sh, ln, s or 0, opts)
     end
     for i, line in ipairs(lines) do
       local ln = i - 1
