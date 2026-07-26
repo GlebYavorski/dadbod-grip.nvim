@@ -974,6 +974,91 @@ test("sqlite get_schema_batch: failure returns nil", function()
   eq(result, nil, "should return nil on failure")
 end)
 
+-- ── SQLite get_indexes ───────────────────────────────────────────────────────
+-- Single pragma_index_list/pragma_index_info join (one spawn) replaces the old
+-- index_list-then-loop-over-index_info (one spawn per index).
+
+test("sqlite get_indexes: groups columns per index preserving seqno order", function()
+  local csv_stdout = table.concat({
+    "idx_name,unique,origin,seqno,col_name",
+    "idx_desc,0,c,0,d",
+    "idx_desc,0,c,1,a",
+    "idx_ab,1,c,0,a",
+    "idx_ab,1,c,1,b",
+  }, "\n") .. "\n"
+
+  local result
+  with_system_mock(csv_stdout, "", 0, function()
+    result = sqlite.get_indexes("t", "sqlite:test.db")
+  end)
+
+  eq(#result, 2, "two indexes")
+  eq(result[1].name, "idx_desc", "first index in seq order")
+  eq(result[1].type, "INDEX", "plain index")
+  eq(#result[1].columns, 2, "idx_desc has 2 columns")
+  eq(result[1].columns[1], "d", "idx_desc column order follows seqno")
+  eq(result[1].columns[2], "a", "idx_desc column order follows seqno")
+  eq(result[2].name, "idx_ab", "second index in seq order")
+  eq(result[2].type, "UNIQUE", "unique index")
+  eq(result[2].columns[1], "a", "idx_ab column order follows seqno")
+  eq(result[2].columns[2], "b", "idx_ab column order follows seqno")
+end)
+
+test("sqlite get_indexes: origin=pk maps to PRIMARY", function()
+  local csv_stdout = table.concat({
+    "idx_name,unique,origin,seqno,col_name",
+    "sqlite_autoindex_t_1,1,pk,0,tenant_id",
+    "sqlite_autoindex_t_1,1,pk,1,user_id",
+  }, "\n") .. "\n"
+
+  local result
+  with_system_mock(csv_stdout, "", 0, function()
+    result = sqlite.get_indexes("t", "sqlite:test.db")
+  end)
+
+  eq(#result, 1, "one index")
+  eq(result[1].type, "PRIMARY", "pk origin maps to PRIMARY")
+  eq(#result[1].columns, 2, "composite pk has 2 columns")
+end)
+
+test("sqlite get_indexes: single spawn regardless of index count", function()
+  local csv_stdout = table.concat({
+    "idx_name,unique,origin,seqno,col_name",
+    "idx_a,0,c,0,x",
+    "idx_b,0,c,0,y",
+    "idx_c,1,c,0,z",
+  }, "\n") .. "\n"
+
+  local calls = 0
+  local orig = vim.system
+  vim.system = function(_args, _opts, cb)
+    calls = calls + 1
+    local r = { stdout = csv_stdout, stderr = "", code = 0 }
+    if cb then cb(r) else return { wait = function() return r end } end
+  end
+  local result = sqlite.get_indexes("t", "sqlite:test.db")
+  vim.system = orig
+
+  eq(#result, 3, "three indexes")
+  eq(calls, 1, "exactly one process spawned for any number of indexes")
+end)
+
+test("sqlite get_indexes: table name is escaped as a string literal, not an identifier", function()
+  local args = capture_system_args("idx_name,unique,origin,seqno,col_name\n", function()
+    sqlite.get_indexes("o'brien", "sqlite:test.db")
+  end)
+  local sql_arg = last_arg(args)
+  contains(sql_arg, "pragma_index_list('o''brien')", "single quote doubled via escape_literal")
+end)
+
+test("sqlite get_indexes: empty result for table with no indexes", function()
+  local result
+  with_system_mock("idx_name,unique,origin,seqno,col_name\n", "", 0, function()
+    result = sqlite.get_indexes("t", "sqlite:test.db")
+  end)
+  eq(#result, 0, "no indexes")
+end)
+
 -- ── DuckDB get_schema_batch ───────────────────────────────────────────────────
 -- Unlike pg/mysql/sqlite, DuckDB's batch query is always the same 8-column shape
 -- (rtype, database_name, schema_name, table_name, column_name, data_type,

@@ -274,14 +274,27 @@ function M.list_tables(url)
   return result, nil
 end
 
+--- List indexes with their columns in a single query (O(1) CLI spawns).
+--- Single query via the pragma_index_list / pragma_index_info table-valued
+--- functions, joined so each index's columns arrive in seqno order without
+--- a per-index PRAGMA round trip.
 function M.get_indexes(table_name, url)
   local db_path = extract_path(url)
   if not db_path then return {}, "Invalid SQLite URL: " .. url end
 
   local tbl = bare_table_name(table_name)
 
-  -- Get index list
-  local stdout, stderr, code = sqlite3(db_path, string.format('PRAGMA index_list("%s")', tbl:gsub('"', '""')))
+  -- il.seq/il."unique"/il.origin: PRAGMA index_list columns.
+  -- ii.seqno/ii.name: PRAGMA index_info columns, one row per index column.
+  -- ORDER BY il.seq (index order) then ii.seqno (column order within the index).
+  local sql_str = string.format([[
+    SELECT il.name AS idx_name, il."unique", il.origin, ii.seqno, ii.name AS col_name
+    FROM pragma_index_list('%s') il
+    JOIN pragma_index_info(il.name) ii
+    ORDER BY il.seq, ii.seqno
+  ]], esc(tbl))
+
+  local stdout, stderr, code = sqlite3(db_path, sql_str)
   if code ~= 0 then
     return {}, stderr ~= "" and stderr or "Failed to query indexes"
   end
@@ -289,30 +302,23 @@ function M.get_indexes(table_name, url)
   local parsed = db_util.parse_csv(stdout)
   if not parsed then return {} end
 
-  -- PRAGMA index_list columns: seq, name, unique, origin, partial
-  local indexes = {}
+  -- Group rows by index name, preserving first-seen (= il.seq) order.
+  local indexes, index = {}, {}
   for _, row in ipairs(parsed.rows) do
-    local idx_name = row[2] or ""
-    local is_unique = row[3] == "1"
-    local origin = row[4] or ""
-    local idx_type = origin == "pk" and "PRIMARY" or (is_unique and "UNIQUE" or "INDEX")
-
-    -- Get columns for this index
-    local col_stdout = sqlite3(db_path, string.format('PRAGMA index_info("%s")', idx_name:gsub('"', '""')))
-    local col_parsed = db_util.parse_csv(col_stdout)
-    local cols = {}
-    if col_parsed then
-      -- PRAGMA index_info columns: seqno, cid, name
-      for _, crow in ipairs(col_parsed.rows) do
-        table.insert(cols, crow[3] or "")
-      end
+    local idx_name = row[1] or ""
+    local entry = index[idx_name]
+    if not entry then
+      local is_unique = row[2] == "1"
+      local origin = row[3] or ""
+      entry = {
+        name = idx_name,
+        type = origin == "pk" and "PRIMARY" or (is_unique and "UNIQUE" or "INDEX"),
+        columns = {},
+      }
+      index[idx_name] = entry
+      table.insert(indexes, entry)
     end
-
-    table.insert(indexes, {
-      name = idx_name,
-      type = idx_type,
-      columns = cols,
-    })
+    table.insert(entry.columns, row[5] or "")
   end
   return indexes, nil
 end
