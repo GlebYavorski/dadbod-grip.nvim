@@ -20,18 +20,28 @@ local function split_table_name(table_name, default_schema)
   return sql_util.split_table_name(table_name, default_schema or "dbo")
 end
 
-local function sqlcmd(parsed, sql_str, timeout_ms)
+--- Build and run the sqlcmd command.
+--- `opts.nocount` (default true) controls whether `SET NOCOUNT ON` is prefixed:
+--- `query` wants it (so "(N rows affected)" doesn't pollute the result grid),
+--- `execute` needs it off (so that same message is present for row-count parsing).
+local function sqlcmd(parsed, sql_str, timeout_ms, opts)
+  opts = opts or {}
+  local nocount = opts.nocount
+  if nocount == nil then nocount = true end
+
   local server = parsed.host or "127.0.0.1"
   if parsed.port and parsed.port ~= "" then
     server = server .. "," .. parsed.port
   end
+
+  local query = nocount and ("SET NOCOUNT ON;\n" .. sql_str) or sql_str
 
   local args = {
     "sqlcmd",
     "-S", server,
     "-W",
     "-s", "\t",
-    "-Q", "SET NOCOUNT ON;\n" .. sql_str,
+    "-Q", query,
   }
 
   if parsed.dbname and parsed.dbname ~= "" then
@@ -120,7 +130,7 @@ function M.execute(sql_str, url)
   end
   local parsed = parse_url(url)
   if not parsed then return nil, "Invalid SQL Server URL: " .. url end
-  local stdout, stderr, code = sqlcmd(parsed, sql_str)
+  local stdout, stderr, code = sqlcmd(parsed, sql_str, nil, { nocount = false })
   if code ~= 0 then
     return nil, stderr ~= "" and stderr or ("sqlcmd exited with code " .. code)
   end
