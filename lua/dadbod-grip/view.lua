@@ -2141,6 +2141,28 @@ function M._column_set(bufnr)
   end, {})
 end
 
+--- Resolve the byte-position map for any grid line, including the header and
+--- the type-annotation row. Returns nil for lines past the rendered rows
+--- unless `fallback` asks for the first data row (then the header) instead.
+--- @param r table    session._render
+--- @param line number  1-indexed buffer line
+--- @param fallback? boolean
+--- @return table|nil  map of column name -> { start, finish } byte offsets
+local function resolve_row_bp(r, line, fallback)
+  local ds = r.data_start or 4
+  local di = line - ds + 1
+  if di < 1 then
+    if ds == 5 and line == ds - 2 then return r.type_row_byte_positions end
+    return r.hdr_byte_positions
+  end
+  local bp = r.byte_positions and r.byte_positions[di]
+  if bp then return bp end
+  if fallback then
+    return (r.byte_positions and r.byte_positions[1]) or r.hdr_byte_positions
+  end
+  return nil
+end
+
 -- ── keymap wiring ─────────────────────────────────────────────────────────
 function M._setup_keymaps(bufnr)
   local km = require("dadbod-grip.keymaps")
@@ -3154,24 +3176,8 @@ function M._setup_keymaps(bufnr)
     local cursor = vim.api.nvim_win_get_cursor(0)
 
     -- Use current row's byte positions (handles per-row multibyte differences like ·NULL·).
-    -- Fall back to hdr_byte_positions when on header/type/separator rows (di < 1).
-    local data_start = r.data_start or 4
-    local di = cursor[1] - data_start + 1
-    local ref_bp
-    if di < 1 then
-      -- Type annotation row has its own byte positions when type names are truncated with "…".
-      -- T row is at line (data_start - 2) when has_type_row (layout: title/hdr/type/sep/data).
-      local type_row_line = r.data_start and (r.data_start - 2)
-      if type_row_line and cursor[1] == type_row_line and r.type_row_byte_positions then
-        ref_bp = r.type_row_byte_positions
-      else
-        ref_bp = r.hdr_byte_positions
-      end
-    elseif r.byte_positions and r.byte_positions[di] then
-      ref_bp = r.byte_positions[di]
-    else
-      ref_bp = r.byte_positions and r.byte_positions[1] or r.hdr_byte_positions
-    end
+    -- Header/type/separator rows and lines past the last row fall back.
+    local ref_bp = resolve_row_bp(r, cursor[1], true)
     if not ref_bp then
       vim.notify("nav_col: no byte positions", vim.log.levels.WARN)
       return
@@ -3312,17 +3318,6 @@ function M._setup_keymaps(bufnr)
     end
   end, "Move down (skip separator)")
 
-  -- Resolve byte-position map for any row including header/type rows.
-  local function resolve_row_bp(r, line)
-    local ds = r.data_start or 4
-    local di = line - ds + 1
-    if di < 1 then
-      if ds == 5 and line == ds - 2 then return r.type_row_byte_positions end
-      return r.hdr_byte_positions
-    end
-    return r.byte_positions and r.byte_positions[di]
-  end
-
   -- ^: first column of current row (works on header, type, and data rows)
   kmap("grid_col_first2", function()
     local session = M._sessions[bufnr]
@@ -3405,22 +3400,7 @@ function M._setup_keymaps(bufnr)
         local cursor = vim.api.nvim_win_get_cursor(0)
         local col_nr = cursor[2]
         local vis_cols = r.visible_columns or (session.state and session.state.columns) or {}
-        local data_start = r.data_start or 4
-        local di = cursor[1] - data_start + 1
-        local ref_bp
-        if di < 1 then
-          -- header, type row, title, or separator row
-          local type_row_line = r.data_start and (r.data_start - 2)
-          if type_row_line and cursor[1] == type_row_line and r.type_row_byte_positions then
-            ref_bp = r.type_row_byte_positions
-          else
-            ref_bp = r.hdr_byte_positions
-          end
-        elseif r.byte_positions and r.byte_positions[di] then
-          ref_bp = r.byte_positions[di]
-        else
-          ref_bp = r.byte_positions and r.byte_positions[1] or r.hdr_byte_positions
-        end
+        local ref_bp = resolve_row_bp(r, cursor[1], true)
         if ref_bp then
           local snap = M._snap_col(vis_cols, ref_bp, col_nr)
           if snap then col = snap.col_name end
@@ -3587,21 +3567,7 @@ function M._setup_keymaps(bufnr)
     local cols = r.visible_columns or session_e.state.columns
     if #cols == 0 then return end
     local cursor = vim.api.nvim_win_get_cursor(0)
-    local data_start = r.data_start or 4
-    local di = cursor[1] - data_start + 1
-    local ref_bp
-    if di < 1 then
-      local type_row_line = r.data_start and (r.data_start - 2)
-      if type_row_line and cursor[1] == type_row_line and r.type_row_byte_positions then
-        ref_bp = r.type_row_byte_positions
-      else
-        ref_bp = r.hdr_byte_positions
-      end
-    elseif r.byte_positions and r.byte_positions[di] then
-      ref_bp = r.byte_positions[di]
-    else
-      ref_bp = r.byte_positions and r.byte_positions[1] or r.hdr_byte_positions
-    end
+    local ref_bp = resolve_row_bp(r, cursor[1], true)
     if not ref_bp then return end
     local col_nr = cursor[2]
     local current_idx = 1
