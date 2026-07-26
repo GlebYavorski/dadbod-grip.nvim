@@ -19,10 +19,16 @@ function M.run_cmd(args, timeout_ms)
   local t = timeout_ms or 30000
   local out
   local done = false
-  vim.system(args, { text = true, timeout = t }, function(r)
+  -- vim.system() raises on spawn failure (ENOENT when the CLI is not installed).
+  -- Adapters promise never to throw, and only query/execute/ping pre-check
+  -- vim.fn.executable(), so swallow it here and report it like a failed exit.
+  local ok, err = pcall(vim.system, args, { text = true, timeout = t }, function(r)
     out = r
     done = true
   end)
+  if not ok then
+    return "", tostring(err), 1
+  end
   -- Poll at 1ms so done is detected immediately after the on_exit callback fires.
   -- The 80ms spinner timer fires when vim.wait pumps the event loop regardless of
   -- poll interval; tight polling just reduces per-call overhead in tests.
