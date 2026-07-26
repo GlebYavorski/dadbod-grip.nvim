@@ -68,17 +68,49 @@ do
   eq(lines[3], "SELECT * FROM orders", "append: new SQL on line 3")
 end
 
--- ── sync_query: multiple appends accumulate ──────────────────────────────────
+-- ── sync_query: consecutive auto-syncs replace the last one ───────────────────
+-- Plain table-hopping (no edits) must NOT pile up SELECTs. The first block here
+-- is user content (set directly), so it's preserved; the auto-synced tail is
+-- replaced each jump.
 
 do
   local b = make_pad()
-  set_lines(b, { "SELECT 1" })
-  qp.sync_query("SELECT 2")
-  qp.sync_query("SELECT 3")
+  set_lines(b, { "SELECT 1" })     -- user content
+  qp.sync_query("SELECT 2")         -- differs from tail → append
+  qp.sync_query("SELECT 3")         -- tail is our own "SELECT 2" → replace it
   local lines = get_lines(b)
-  eq(lines[1], "SELECT 1", "multi-append: original preserved")
-  eq(lines[3], "SELECT 2", "multi-append: second query appended")
-  eq(lines[5], "SELECT 3", "multi-append: third query appended")
+  eq(lines[1], "SELECT 1", "auto-sync: user's first block preserved")
+  eq(lines[2], "", "auto-sync: blank separator kept")
+  eq(lines[3], "SELECT 3", "auto-sync: tail replaced, not accumulated")
+  eq(#lines, 3, "auto-sync: no pile-up (3 lines, not 5)")
+end
+
+-- ── sync_query: pure navigation never accumulates ─────────────────────────────
+
+do
+  local b = make_pad()
+  set_lines(b, { "-- C-CR:run  gA:ai", "" })  -- fresh hint-only pad
+  qp.sync_query('SELECT * FROM "A"')
+  qp.sync_query('SELECT * FROM "B"')
+  qp.sync_query('SELECT * FROM "C"')
+  local lines = get_lines(b)
+  eq(lines[1], 'SELECT * FROM "C"', "pure-nav: only the latest table remains")
+  eq(#lines, 1, "pure-nav: exactly one query, no accumulation")
+end
+
+-- ── sync_query: an edited query is preserved, next jump appends below it ───────
+
+do
+  local b = make_pad()
+  set_lines(b, { "-- C-CR:run", "" })
+  qp.sync_query('SELECT * FROM "A"')                 -- auto
+  set_lines(b, { [[SELECT * FROM "A" WHERE id = 1]] })  -- user edits the tail
+  qp.sync_query('SELECT * FROM "B"')                 -- tail edited → append
+  qp.sync_query('SELECT * FROM "C"')                 -- tail is our "B" → replace
+  local lines = get_lines(b)
+  eq(lines[1], [[SELECT * FROM "A" WHERE id = 1]], "edited: user's edit preserved")
+  eq(lines[3], 'SELECT * FROM "C"', "edited: later auto-syncs replace only the tail")
+  eq(#lines, 3, "edited: one preserved block + one live tail")
 end
 
 -- ── sync_query: hint on line 1, real content below → append, not replace ─────

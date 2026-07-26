@@ -6,6 +6,10 @@ local M = {}
 
 local _ag = vim.api.nvim_create_augroup("DadbodGripQueryPad", { clear = true })
 local _pad_bufnr = nil
+-- Exact SQL text sync_query last wrote as the pad's trailing block. Lets the next
+-- sync tell an untouched auto-synced query (replace it) from one the user edited
+-- or authored (keep it, append below). nil = no auto-sync to reclaim.
+local _last_synced = nil
 
 --- Return true when `lines` contains real SQL content.
 --- Strips the hint comment (-- C-CR:...) and AI separator (-- AI generated:)
@@ -98,6 +102,7 @@ local function ensure_buf(url)
   end
 
   _pad_bufnr = vim.api.nvim_create_buf(true, false)
+  _last_synced = nil  -- fresh pad has no auto-sync history to reclaim
   vim.bo[_pad_bufnr].buftype = "acwrite"
   vim.bo[_pad_bufnr].swapfile = false
   vim.bo[_pad_bufnr].filetype = "sql"
@@ -688,6 +693,7 @@ function M.append_sql(sql_text, opts)
     vim.list_extend(append, sql_lines)
     vim.api.nvim_buf_set_lines(_pad_bufnr, -1, -1, false, append)
   end
+  _last_synced = nil  -- AI content is user-owned; the next sync must not reclaim it
   vim.bo[_pad_bufnr].modified = false
   -- Move cursor to the new SQL
   local total = vim.api.nvim_buf_line_count(_pad_bufnr)
@@ -697,11 +703,26 @@ function M.append_sql(sql_text, opts)
   end
 end
 
+--- Return the [start, end] 1-based line range of the pad's trailing paragraph
+--- (last run of non-blank lines), or nil when there is none.
+local function _trailing_block_range(lines)
+  local e = #lines
+  while e >= 1 and lines[e]:match("^%s*$") do e = e - 1 end
+  if e < 1 then return nil end
+  local s = e
+  while s > 1 and not lines[s - 1]:match("^%s*$") do s = s - 1 end
+  return s, e
+end
+
 --- Silently sync the query pad with the SQL from the just-opened grid.
 --- Called automatically when a table or query opens from outside the pad (sidebar,
 --- table picker, FK navigation). No-op if the pad buffer doesn't exist yet.
---- Behaviour: populate an empty/hint-only pad; append below existing content
---- so user queries are never clobbered.
+--- Behaviour:
+---   • empty/hint-only pad → populate it;
+---   • trailing block is the query we auto-synced last (user didn't touch it) →
+---     replace it, so plain table-hopping doesn't pile up SELECTs;
+---   • trailing block was edited or authored by the user → append below it, so
+---     real queries are never clobbered.
 function M.sync_query(sql_text)
   if not _pad_bufnr or not vim.api.nvim_buf_is_valid(_pad_bufnr) then return end
   if not sql_text or sql_text:match("^%s*$") then return end
@@ -711,13 +732,22 @@ function M.sync_query(sql_text)
   if not _has_real_content(lines) then
     vim.api.nvim_buf_set_lines(_pad_bufnr, 0, -1, false, sql_lines)
   else
-    local append = { "" }
-    vim.list_extend(append, sql_lines)
-    vim.api.nvim_buf_set_lines(_pad_bufnr, -1, -1, false, append)
+    local ts, te = _trailing_block_range(lines)
+    local trailing = ts and table.concat(vim.list_slice(lines, ts, te), "\n") or nil
+    if _last_synced ~= nil and trailing == _last_synced then
+      -- Untouched auto-synced query: replace it in place (keep everything above).
+      vim.api.nvim_buf_set_lines(_pad_bufnr, ts - 1, -1, false, sql_lines)
+    else
+      -- User content in the trailing block: append a new block below it.
+      local append = { "" }
+      vim.list_extend(append, sql_lines)
+      vim.api.nvim_buf_set_lines(_pad_bufnr, -1, -1, false, append)
+    end
     local total = vim.api.nvim_buf_line_count(_pad_bufnr)
     local win = vim.fn.bufwinid(_pad_bufnr)
     if win ~= -1 then pcall(vim.api.nvim_win_set_cursor, win, { total, 0 }) end
   end
+  _last_synced = sql_text
   vim.bo[_pad_bufnr].modified = false
 end
 
@@ -781,6 +811,7 @@ end
 --- NOT for production use.
 function M._set_pad_bufnr(bufnr)
   _pad_bufnr = bufnr
+  _last_synced = nil  -- a swapped-in pad carries no auto-sync history
 end
 
 --- Read-only access to the current pad buffer number. Nil if no pad is open.
