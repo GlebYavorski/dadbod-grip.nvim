@@ -48,7 +48,11 @@ local function build_attach_prefix(url)
       seen_ext[a.extension] = true
       table.insert(parts, string.format("INSTALL %s; LOAD %s;", a.extension, a.extension))
     end
-    table.insert(parts, string.format("ATTACH IF NOT EXISTS '%s' AS %s;", a.dsn, a.alias))
+    -- Escape single quotes in the DSN: it is a string literal here, and an
+    -- unescaped quote breaks every subsequent query on this connection.
+    -- Matches the validation path in M.attach().
+    local dsn_lit = (a.dsn:gsub("'", "''"))
+    table.insert(parts, string.format("ATTACH IF NOT EXISTS '%s' AS %s;", dsn_lit, a.alias))
   end
   return table.concat(parts, "\n") .. "\n"
 end
