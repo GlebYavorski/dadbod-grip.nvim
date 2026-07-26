@@ -125,7 +125,7 @@ end
 
 --- Public: return discovered connections, cached for 2s within a session.
 function M.fetch()
-  local now = vim.uv and vim.uv.hrtime() or vim.loop.hrtime()
+  local now = vim.uv.hrtime()
   if (now - M._cache.ts) < TTL_NS then
     return { connections = M._cache.value, error = nil }
   end

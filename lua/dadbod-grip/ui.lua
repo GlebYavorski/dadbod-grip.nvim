@@ -203,7 +203,9 @@ function M.blocking(msg, fn)
   })
   vim.o.eventignore = ei
 
-  -- Flush to terminal NOW, before fn() runs.
+  -- Flush to terminal NOW, before fn() runs. nvim__redraw is private API on
+  -- purpose: there is no public equivalent that flushes from inside a blocking
+  -- call (:redraw is a no-op while we hold the loop).
   vim.api.nvim__redraw({ flush = true })
 
   -- Animate: timer fires during vim.system():wait() and vim.wait() event loop pumps.

@@ -3512,7 +3512,7 @@ local function setup_nav_keymaps(bufnr, ctx)
       title_pos  = "center",
       zindex     = 55,
     })
-    vim.api.nvim_win_set_option(pwin, "cursorline", true)
+    vim.api.nvim_set_option_value("cursorline", true, { win = pwin })
     vim.api.nvim_win_set_cursor(pwin, { 1, 0 })
 
     local function close_picker()
