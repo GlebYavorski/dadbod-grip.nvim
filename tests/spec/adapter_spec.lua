@@ -974,6 +974,60 @@ test("sqlite get_schema_batch: failure returns nil", function()
   eq(result, nil, "should return nil on failure")
 end)
 
+-- ── DuckDB get_schema_batch ───────────────────────────────────────────────────
+-- Unlike pg/mysql/sqlite, DuckDB's batch query shape depends on whether the URL
+-- has attachments (federation), so is_nullable threading is tested in both modes.
+
+test("duckdb get_schema_batch: no attachments, is_nullable comes from information_schema", function()
+  local csv_stdout = table.concat({
+    "table_schema,table_name,column_name,data_type,is_nullable",
+    "main,users,id,INTEGER,NO",
+    "main,users,name,VARCHAR,YES",
+  }, "\n") .. "\n"
+
+  local result
+  with_system_mock(csv_stdout, "", 0, function()
+    result = duckdb.get_schema_batch("duckdb:plain.db")
+  end)
+
+  assert(result ~= nil, "result must not be nil")
+  assert(result["users"] ~= nil, "must have users key")
+  eq(result["users"][1].is_nullable, "NO", "id is NOT NULL")
+  eq(result["users"][2].is_nullable, "YES", "name is nullable")
+end)
+
+test("duckdb get_schema_batch: with attachments, is_nullable kept for main catalog, blanked for attached", function()
+  local url = "duckdb:test_attach.db"
+
+  -- Fake a successful ATTACH so _attachments[url] is populated (drives has_attachments=true).
+  with_system_mock("", "", 0, function()
+    duckdb.load_attachments(url, { { dsn = "sqlite:other.db", alias = "sup" } })
+  end)
+
+  -- database_name "test_attach" matches _extract_path("test_attach.db") -> main_catalog "test_attach".
+  local csv_stdout = table.concat({
+    "rtype,database_name,schema_name,table_name,column_name,data_type,is_nullable",
+    "col,test_attach,main,users,id,INTEGER,NO",
+    "col,test_attach,main,users,name,VARCHAR,YES",
+    "col,sup,main,orders,id,INTEGER,YES",
+  }, "\n") .. "\n"
+
+  local result
+  with_system_mock(csv_stdout, "", 0, function()
+    result = duckdb.get_schema_batch(url)
+  end)
+
+  duckdb.load_attachments(url, {})  -- reset attachment state for later tests
+
+  assert(result ~= nil, "result must not be nil")
+  assert(result["users"] ~= nil, "main-catalog table present")
+  eq(result["users"][1].is_nullable, "NO", "main catalog is_nullable preserved")
+  eq(result["users"][2].is_nullable, "YES", "main catalog is_nullable preserved (2nd col)")
+  assert(result["sup.orders"] ~= nil, "attached-catalog table present")
+  eq(result["sup.orders"][1].is_nullable, "",
+    "attached catalog is_nullable blanked -- matches get_column_info's attached-catalog branch")
+end)
+
 -- ── Completion: get_schema prefers batch over per-table ─────────────────────
 -- When get_schema_batch returns data, list_tables + get_column_info must NOT be called.
 

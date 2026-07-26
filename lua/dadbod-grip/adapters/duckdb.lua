@@ -861,15 +861,17 @@ end
 --- Without attachments: plain information_schema.columns query.
 local function _make_schema_batch_sql(has_attachments, main_catalog)
   if has_attachments then
-    -- 6-column result: rtype, database_name, schema_name, table_name, column_name, data_type
+    -- 7-column result: rtype, database_name, schema_name, table_name, column_name,
+    -- data_type, is_nullable ('YES'/'NO', same convention get_column_info uses).
     -- 'col' rows = all DB columns (main + attached catalogs via duckdb_columns())
     -- 'tbl' rows = views only (duckdb_columns() does not cover views)
     return [[
-      SELECT 'col' AS rtype, database_name, schema_name, table_name, column_name, data_type
+      SELECT 'col' AS rtype, database_name, schema_name, table_name, column_name, data_type,
+             CASE WHEN is_nullable THEN 'YES' ELSE 'NO' END AS is_nullable
       FROM duckdb_columns()
       WHERE internal = false
       UNION ALL
-      SELECT 'tbl' AS rtype, database_name, schema_name, view_name, '', ''
+      SELECT 'tbl' AS rtype, database_name, schema_name, view_name, '', '', ''
       FROM duckdb_views()
       WHERE internal = false
       ORDER BY 1, 2, 3
@@ -877,7 +879,7 @@ local function _make_schema_batch_sql(has_attachments, main_catalog)
   else
     -- No attachments: information_schema.columns covers main DB + native schemas.
     return [[
-      SELECT table_schema, table_name, column_name, data_type
+      SELECT table_schema, table_name, column_name, data_type, is_nullable
       FROM information_schema.columns
       WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
       ORDER BY table_schema, table_name, ordinal_position
@@ -891,7 +893,7 @@ local function _parse_schema_batch_rows(parsed, has_attachments, main_catalog)
   if not parsed then return nil end
   local tables = {}
   if has_attachments then
-    -- 6-column rows: rtype, database_name, schema_name, table_name, col_name, data_type
+    -- 7-column rows: rtype, database_name, schema_name, table_name, col_name, data_type, is_nullable
     for _, row in ipairs(parsed.rows) do
       local rtype       = row[1] or ""
       local catalog     = row[2] or main_catalog
@@ -908,8 +910,11 @@ local function _parse_schema_batch_rows(parsed, has_attachments, main_catalog)
           -- Attached catalog: prefix with catalog alias (matches list_tables() output)
           full_name = catalog .. "." .. tname
         end
+        -- Nullability for attached catalogs mirrors get_column_info's attached-catalog
+        -- branch, which leaves it blank rather than trust duckdb_columns() there.
+        local is_nullable = (catalog == main_catalog) and (row[7] or "") or ""
         tables[full_name] = tables[full_name] or {}
-        table.insert(tables[full_name], { column_name = col_name, data_type = data_type, is_nullable = "" })
+        table.insert(tables[full_name], { column_name = col_name, data_type = data_type, is_nullable = is_nullable })
       else
         -- View row: duckdb_columns() does not include views, so register them name-only.
         local full_name
@@ -922,15 +927,16 @@ local function _parse_schema_batch_rows(parsed, has_attachments, main_catalog)
       end
     end
   else
-    -- 4-column rows: table_schema, table_name, column_name, data_type
+    -- 5-column rows: table_schema, table_name, column_name, data_type, is_nullable
     for _, row in ipairs(parsed.rows) do
       local schema_name = row[1] or "main"
       local tname       = row[2] or ""
       local col_name    = row[3] or ""
       local data_type   = row[4] or ""
+      local is_nullable = row[5] or ""
       local full_name = (schema_name == "main") and tname or (schema_name .. "." .. tname)
       tables[full_name] = tables[full_name] or {}
-      table.insert(tables[full_name], { column_name = col_name, data_type = data_type, is_nullable = "" })
+      table.insert(tables[full_name], { column_name = col_name, data_type = data_type, is_nullable = is_nullable })
     end
   end
   return tables

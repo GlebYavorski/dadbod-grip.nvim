@@ -136,6 +136,83 @@ test("_format_ddl_line: NOT NULL markers", function()
   assert(not result:find("id integer PK NOT NULL"), "PK should not also say NOT NULL")
 end)
 
+-- ── build_schema_context: get_schema_batch integration ──────────────────────
+-- Regression guard for the batch/per-table split: tables served by
+-- get_schema_batch must skip get_column_info entirely (that's the whole point
+-- of batching -- one CLI spawn instead of one per table), and any table the
+-- batch doesn't cover must still get its columns via the old per-table call
+-- so nothing silently disappears from the AI prompt.
+
+local db = require("dadbod-grip.db")
+
+local function mock_ai_db(list, batch, opts)
+  opts = opts or {}
+  local orig_list  = db.list_tables
+  local orig_batch = db.get_schema_batch
+  local orig_cols  = db.get_column_info
+  local orig_pks   = db.get_primary_keys
+  local orig_fks   = db.get_foreign_keys
+
+  db.list_tables = function(_) return list, nil end
+  db.get_schema_batch = function(_) return batch end
+  db.get_column_info = function(tbl, _)
+    if opts.fail_on_get_column_info then
+      error("get_column_info must not be called for '" .. tbl .. "' -- batch already served it")
+    end
+    return (opts.fallback_cols or {})[tbl]
+  end
+  db.get_primary_keys = function(_, _) return {} end
+  db.get_foreign_keys = function(_, _) return {} end
+
+  return function()
+    db.list_tables      = orig_list
+    db.get_schema_batch  = orig_batch
+    db.get_column_info  = orig_cols
+    db.get_primary_keys = orig_pks
+    db.get_foreign_keys = orig_fks
+  end
+end
+
+test("build_schema_context: batch-served tables skip get_column_info", function()
+  local restore = mock_ai_db(
+    { { name = "users" }, { name = "orders" } },
+    {
+      users  = { { column_name = "id", data_type = "integer", is_nullable = "NO" } },
+      orders = { { column_name = "id", data_type = "integer", is_nullable = "NO" } },
+    },
+    { fail_on_get_column_info = true }
+  )
+  local ok_call, ddl = pcall(ai.build_schema_context, "test://batch-only", "")
+  restore()
+  assert(ok_call, "build_schema_context must not call get_column_info when batch covers every table: " .. tostring(ddl))
+  contains(ddl, "CREATE TABLE users", "users table present")
+  contains(ddl, "CREATE TABLE orders", "orders table present")
+end)
+
+test("build_schema_context: table missing from batch falls back to get_column_info", function()
+  local restore = mock_ai_db(
+    { { name = "users" }, { name = "legacy" } },
+    { users = { { column_name = "id", data_type = "integer", is_nullable = "NO" } } },  -- "legacy" absent from batch
+    { fallback_cols = { legacy = { { column_name = "old_id", data_type = "text", is_nullable = "YES" } } } }
+  )
+  local ddl = ai.build_schema_context("test://batch-partial", "")
+  restore()
+  contains(ddl, "CREATE TABLE users", "users from batch present")
+  contains(ddl, "CREATE TABLE legacy", "legacy table present via per-table fallback")
+  contains(ddl, "old_id", "legacy column present via fallback")
+end)
+
+test("build_schema_context: adapter without batch support falls back entirely", function()
+  local restore = mock_ai_db(
+    { { name = "users" } },
+    nil,  -- adapter has no get_schema_batch / it errored -- same as today's behavior
+    { fallback_cols = { users = { { column_name = "id", data_type = "integer", is_nullable = "NO" } } } }
+  )
+  local ddl = ai.build_schema_context("test://no-batch", "")
+  restore()
+  contains(ddl, "CREATE TABLE users", "users table present via full fallback")
+end)
+
 -- ── _strip_fences ────────────────────────────────────────────────────────────
 
 test("_strip_fences: removes sql code fences", function()

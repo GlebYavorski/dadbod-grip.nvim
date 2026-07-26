@@ -262,11 +262,22 @@ function M.get_foreign_keys(table_name, url)
 end
 
 function M.get_schema_batch(url)
+  -- data_type formatting mirrors get_column_info's expression exactly (length/precision
+  -- suffix) so callers get the same string whether a table came from the batch or from
+  -- a per-table fallback call.
   local result = run_query([[
     SELECT
       CASE WHEN TABLE_SCHEMA = 'dbo' THEN TABLE_NAME ELSE TABLE_SCHEMA + '.' + TABLE_NAME END AS table_name,
       COLUMN_NAME,
-      DATA_TYPE,
+      DATA_TYPE +
+        CASE
+          WHEN CHARACTER_MAXIMUM_LENGTH IS NOT NULL AND CHARACTER_MAXIMUM_LENGTH > 0
+            THEN '(' + CAST(CHARACTER_MAXIMUM_LENGTH AS varchar(20)) + ')'
+          WHEN NUMERIC_PRECISION IS NOT NULL AND DATA_TYPE NOT IN ('int','bigint','smallint','tinyint','bit')
+            THEN '(' + CAST(NUMERIC_PRECISION AS varchar(20)) +
+                 CASE WHEN NUMERIC_SCALE > 0 THEN ',' + CAST(NUMERIC_SCALE AS varchar(20)) ELSE '' END + ')'
+          ELSE ''
+        END AS data_type,
       IS_NULLABLE
     FROM INFORMATION_SCHEMA.COLUMNS
     ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
