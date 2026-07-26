@@ -237,7 +237,6 @@ function M.build_lines(profile_data, term_width)
 
   local lines = {}
   local marks = {}
-  local ns_name = "grip_profile"
 
   local function add(s) table.insert(lines, s) end
   local function mark(hl)

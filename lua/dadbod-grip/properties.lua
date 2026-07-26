@@ -2,9 +2,8 @@
 -- Shows full table metadata: columns, PKs, FKs, indexes, row estimate, size.
 -- Opened via gI from a grip grid or :GripProperties command.
 
-local db   = require("dadbod-grip.db")
-local sql  = require("dadbod-grip.sql")
-local ui   = require("dadbod-grip.ui")
+local db = require("dadbod-grip.db")
+local ui = require("dadbod-grip.ui")
 
 local M = {}
 

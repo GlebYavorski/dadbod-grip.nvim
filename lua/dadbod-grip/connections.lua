@@ -140,15 +140,6 @@ local function scan_local_files()
   return result
 end
 
---- Mask the password in a DB URL for display. Returns URL unchanged if no password found.
-local function mask_url(url)
-  if not url or url == "" then return url end
-  -- Match ://user:password@host: replace password with ***
-  return (url:gsub("(://[^:@/]+:)([^@]+)(@)", function(pre, _, at)
-    return pre .. "***" .. at
-  end))
-end
-
 --- Short URL for display: strips credentials, keeps host/dbname or filename only.
 local function short_url(url)
   if not url or url == "" then return url end

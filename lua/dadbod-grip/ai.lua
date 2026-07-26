@@ -2,9 +2,8 @@
 -- Multi-provider: Anthropic, OpenAI, Gemini, Ollama.
 -- Schema context auto-assembled from grip metadata.
 
-local db      = require("dadbod-grip.db")
-local sql_mod = require("dadbod-grip.sql")
-local ui      = require("dadbod-grip.ui")
+local db = require("dadbod-grip.db")
+local ui = require("dadbod-grip.ui")
 
 local M = {}
 
@@ -320,16 +319,6 @@ function M._strip_fences(text)
   -- Remove any remaining code fences
   s = s:gsub("^%s*```%w*%s*\n?", "")
   s = s:gsub("\n?%s*```%s*$", "")
-
-  -- SQL keywords that can start or continue a statement
-  local sql_kw = "^%s*(" .. table.concat({
-    "SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP",
-    "FROM", "WHERE", "AND", "OR", "ORDER", "GROUP", "HAVING", "LIMIT", "OFFSET",
-    "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "CROSS", "ON", "AS", "SET",
-    "INTO", "VALUES", "UNION", "INTERSECT", "EXCEPT", "CASE", "WHEN", "THEN",
-    "ELSE", "END", "NOT", "IN", "EXISTS", "BETWEEN", "LIKE", "IS", "NULL",
-    "ASC", "DESC", "DISTINCT", "ALL", "ANY", "SOME", "COALESCE",
-  }, "[%s,]|") .. "[%s,])"
 
   -- If response contains prose + SQL, extract the SQL statement
   local sql_start = s:match("\n(SELECT%s.+)") or s:match("\n(WITH%s.+)")
