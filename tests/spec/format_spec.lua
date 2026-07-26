@@ -301,6 +301,48 @@ test("no leading newline on first keyword", function()
   assert(not out:match("^\n"), "should not start with newline, got:\n" .. out)
 end)
 
+-- ── Multi-char operators are never split ───────────────────────────────────
+-- Regression: the three-char branch used to sit *below* the two-char branch,
+-- so "->>" tokenized as "->" + ">" and came out as "-> >". Several two-char
+-- PostgreSQL operators were missing from the list entirely.
+
+local function keeps_operator(op, sql)
+  test("keeps " .. op .. " intact", function()
+    local out = f(sql)
+    has(out, op, true)
+    -- No space inserted inside the operator itself.
+    for k = 1, #op - 1 do
+      hasnt(out, vim.pesc(op:sub(1, k)) .. "%s+" .. vim.pesc(op:sub(k + 1)))
+    end
+  end)
+end
+
+keeps_operator("->>", "select data ->> 'name' from t")
+keeps_operator("#>>", "select data #>> '{a,b}' from t")
+keeps_operator("->",  "select data -> 'k' from t")
+keeps_operator("#>",  "select data #> '{a}' from t")
+keeps_operator("@>",  "select * from t where a @> b")
+keeps_operator("<@",  "select * from t where a <@ b")
+keeps_operator("&&",  "select * from t where tags && ARRAY['a']")
+keeps_operator("<<",  "select * from t where ip << '10.0.0.0/8'")
+keeps_operator(">>",  "select * from t where net >> ip")
+keeps_operator("@@",  "select * from t where tsv @@ q")
+keeps_operator("!~",  "select * from t where a !~ 'x'")
+keeps_operator("~*",  "select * from t where a ~* 'x'")
+keeps_operator("!~*", "select * from t where a !~* 'x'")
+keeps_operator("<=>", "select * from t where a <=> b")
+keeps_operator("::",  "select id::text from t")
+keeps_operator("!=",  "select * from t where a != b")
+keeps_operator("<>",  "select * from t where a <> b")
+keeps_operator("<=",  "select * from t where a <= b")
+keeps_operator(">=",  "select * from t where a >= b")
+keeps_operator("||",  "select a || b from t")
+
+test("chained jsonb path operators survive", function()
+  local out = f("select payload -> 'user' ->> 'email' from events")
+  has(out, "-> 'user' ->> 'email'", true)
+end)
+
 -- ── summary ──────────────────────────────────────────────────────────────
 
 print(string.format("format_spec: %d passed, %d failed", pass, fail))

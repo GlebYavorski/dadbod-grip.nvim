@@ -21,7 +21,26 @@ local M = {}
 --   "comment" -- line comment or /* block comment */
 --             Content is passed through verbatim.
 --   "ws"      whitespace run (spaces, tabs, newlines) - collapsed by the formatter
---   "other"   any other single character (punctuation, operators, etc.)
+--   "other"   punctuation or an operator (one to three characters)
+
+-- Multi-character operators, grouped by length. Matched longest-first so that
+-- e.g. "->>" is not split into "->" and ">" (which silently corrupted jsonb
+-- and array queries in the Lua fallback).
+local OP3 = {
+  ["->>"] = true, ["#>>"] = true,   -- jsonb path as text
+  ["!~*"] = true, ["~~*"] = true,   -- case-insensitive regex / LIKE
+  ["<=>"] = true,                   -- MySQL null-safe equality
+  ["<<="] = true, [">>="] = true,   -- inet contained-within-or-equals
+}
+local OP2 = {
+  ["!="] = true, ["<>"] = true, ["<="] = true, [">="] = true,
+  ["||"] = true, ["::"] = true,
+  ["->"] = true, ["#>"] = true,                                 -- jsonb path
+  ["@>"] = true, ["<@"] = true, ["&&"] = true,                  -- containment / overlap
+  ["<<"] = true, [">>"] = true,                                 -- shift / inet
+  ["~~"] = true, ["~*"] = true, ["!~"] = true,                  -- LIKE / regex
+  ["@@"] = true,                                                -- full-text match
+}
 
 local function tokenize(sql)
   local tokens = {}
@@ -118,16 +137,14 @@ local function tokenize(sql)
       table.insert(tokens, { type = "word", text = sql:sub(i, j - 1) })
       i = j
 
-    -- Multi-char operators: check before falling to single-char
-    elseif c2 == "!=" or c2 == "<>" or c2 == "<=" or c2 == ">=" or
-           c2 == "||" or c2 == "::" or c2 == "->" or c2 == "~~" then
+    -- Multi-char operators: longest match first, before falling to single-char
+    elseif OP3[sql:sub(i, i + 2)] then
+      table.insert(tokens, { type = "other", text = sql:sub(i, i + 2) })
+      i = i + 3
+
+    elseif OP2[c2] then
       table.insert(tokens, { type = "other", text = c2 })
       i = i + 2
-
-    -- Three-char operator ->>'
-    elseif sql:sub(i, i + 2) == "->>" then
-      table.insert(tokens, { type = "other", text = "->>" })
-      i = i + 3
 
     -- Any other single character (operator, punctuation, etc.)
     else
