@@ -137,19 +137,15 @@ function M.get_column_info(table_name, url)
 
   local schema, tbl = split_table_name(table_name, parsed.dbname)
 
+  -- COLUMN_TYPE is the type as spelled in the DDL: enum('a','b'), varchar(100),
+  -- decimal(10,2), bigint unsigned. Rebuilding it from DATA_TYPE plus
+  -- CHARACTER_MAXIMUM_LENGTH / NUMERIC_PRECISION instead yields labels that are
+  -- shaped like DDL but lie: enum(7) is the longest value's length, float(12) is
+  -- the type's precision, longtext(4294967295) is the format's limit.
   local info_sql = string.format([[
     SELECT
       c.COLUMN_NAME AS column_name,
-      CONCAT(c.DATA_TYPE,
-             CASE WHEN c.CHARACTER_MAXIMUM_LENGTH IS NOT NULL
-                  THEN CONCAT('(', c.CHARACTER_MAXIMUM_LENGTH, ')')
-                  WHEN c.NUMERIC_PRECISION IS NOT NULL
-                       AND c.DATA_TYPE NOT IN ('int','bigint','smallint','tinyint','mediumint')
-                  THEN CONCAT('(', c.NUMERIC_PRECISION,
-                              CASE WHEN c.NUMERIC_SCALE > 0
-                                   THEN CONCAT(',', c.NUMERIC_SCALE) ELSE '' END, ')')
-                  ELSE ''
-             END) AS data_type,
+      c.COLUMN_TYPE AS data_type,
       c.IS_NULLABLE AS is_nullable,
       COALESCE(c.COLUMN_DEFAULT, '') AS column_default,
       COALESCE(c.COLUMN_KEY, '') AS constraints
@@ -270,16 +266,7 @@ local SCHEMA_BATCH_SQL = [[
     SELECT
       c.TABLE_NAME AS table_name,
       c.COLUMN_NAME AS column_name,
-      CONCAT(c.DATA_TYPE,
-             CASE WHEN c.CHARACTER_MAXIMUM_LENGTH IS NOT NULL
-                  THEN CONCAT('(', c.CHARACTER_MAXIMUM_LENGTH, ')')
-                  WHEN c.NUMERIC_PRECISION IS NOT NULL
-                       AND c.DATA_TYPE NOT IN ('int','bigint','smallint','tinyint','mediumint')
-                  THEN CONCAT('(', c.NUMERIC_PRECISION,
-                              CASE WHEN c.NUMERIC_SCALE > 0
-                                   THEN CONCAT(',', c.NUMERIC_SCALE) ELSE '' END, ')')
-                  ELSE ''
-             END) AS data_type,
+      c.COLUMN_TYPE AS data_type, -- DDL spelling; see get_column_info
       c.IS_NULLABLE AS is_nullable
     FROM information_schema.COLUMNS c
     WHERE c.TABLE_SCHEMA = DATABASE()

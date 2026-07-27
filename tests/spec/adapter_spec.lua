@@ -976,6 +976,60 @@ test("mysql get_schema_batch: single subprocess call", function()
   eq(call_count, 1, "exactly one subprocess call for batch")
 end)
 
+-- ── MySQL column types come from COLUMN_TYPE ─────────────────────────────────
+-- Rebuilding the type from DATA_TYPE + CHARACTER_MAXIMUM_LENGTH/NUMERIC_PRECISION
+-- renders enum(7), float(12) and longtext(4294967295) -- shaped like DDL, wrong.
+
+local function assert_uses_column_type(sql, label)
+  contains(sql, "c.COLUMN_TYPE AS data_type", label .. " selects COLUMN_TYPE")
+  assert(not sql:find("NUMERIC_PRECISION", 1, true),
+    label .. " must not rebuild the type from NUMERIC_PRECISION")
+  assert(not sql:find("CHARACTER_MAXIMUM_LENGTH", 1, true),
+    label .. " must not rebuild the type from CHARACTER_MAXIMUM_LENGTH")
+end
+
+test("mysql get_schema_batch: type comes from COLUMN_TYPE verbatim", function()
+  local tsv = table.concat({
+    "table_name\tcolumn_name\tdata_type\tis_nullable",
+    "type_zoo\tfeeling\tenum('happy','sad','neutral')\tYES",
+    "type_zoo\tbig_unsigned\tbigint unsigned\tYES",
+  }, "\n") .. "\n"
+
+  local args, result
+  with_executable(function()
+    args = capture_system_args(tsv, function()
+      result = mysql.get_schema_batch("mysql://root:pass@localhost/testdb")
+    end)
+  end)
+
+  assert_uses_column_type(last_arg(args), "SCHEMA_BATCH_SQL")
+  eq(result["type_zoo"][1].data_type, "enum('happy','sad','neutral')",
+    "enum value list survives the TSV round-trip, commas and quotes included")
+  eq(result["type_zoo"][2].data_type, "bigint unsigned", "unsigned modifier kept")
+end)
+
+test("mysql get_column_info: type comes from COLUMN_TYPE verbatim", function()
+  local tsv = table.concat({
+    "column_name\tdata_type\tis_nullable\tcolumn_default\tconstraints",
+    "feeling\tenum('happy','sad','neutral')\tYES\t\t",
+    "approx_float\tfloat\tYES\t\t",
+    "unit_price\tdecimal(10,2)\tNO\t\tPRI",
+  }, "\n") .. "\n"
+
+  local args, cols
+  with_executable(function()
+    args = capture_system_args(tsv, function()
+      cols = mysql.get_column_info("type_zoo", "mysql://root:pass@localhost/testdb")
+    end)
+  end)
+
+  assert_uses_column_type(last_arg(args), "get_column_info SQL")
+  eq(cols[1].data_type, "enum('happy','sad','neutral')", "enum list")
+  eq(cols[2].data_type, "float", "float without a bogus precision")
+  eq(cols[3].data_type, "decimal(10,2)", "decimal keeps precision and scale")
+  eq(cols[3].constraints, "PRIMARY KEY", "COLUMN_KEY still maps to a constraint label")
+end)
+
 -- ── SQLite get_schema_batch ──────────────────────────────────────────────────
 
 test("sqlite get_schema_batch: returns columns keyed by table name", function()
