@@ -21,6 +21,10 @@ if not URL or URL == "" then
 end
 
 local my = require("dadbod-grip.adapters.mysql")
+local sql = require("dadbod-grip.sql")
+
+-- Written by the EXPLAIN test, which must never see it take effect.
+local SENTINEL = "zzz_explained"
 
 if vim.fn.executable("mysql") == 0 then
   print("SKIP: mysql_integration_spec (mysql CLI not found)")
@@ -283,9 +287,22 @@ test("explain: SELECT produces a plan and never runs DML", function()
   assert(my.explain("SELECT * FROM users WHERE id = 1", URL), "pk lookup still plans")
 
   local before = my.query("SELECT status FROM orders WHERE id = 1", URL).rows[1][1]
-  my.explain("UPDATE orders SET status = 'zzz_explained' WHERE id = 1", URL)
-  local after = my.query("SELECT status FROM orders WHERE id = 1", URL).rows[1][1]
-  eq(after, before, "EXPLAIN must not mutate data")
+  -- If a regression ever lets EXPLAIN run the statement, the sentinel would stay
+  -- in the seed and every later run would compare sentinel against sentinel --
+  -- green, and blind. So refuse to run against an already-poisoned row, and
+  -- restore the original value afterwards whether or not the assertion held.
+  assert(before ~= SENTINEL,
+    "orders.id=1 already holds the sentinel; reseed with tests/seed_mysql.sql")
+
+  local ok, err = pcall(function()
+    my.explain("UPDATE orders SET status = '" .. SENTINEL .. "' WHERE id = 1", URL)
+    local after = my.query("SELECT status FROM orders WHERE id = 1", URL).rows[1][1]
+    eq(after, before, "EXPLAIN must not mutate data")
+  end)
+
+  my.execute(string.format("UPDATE orders SET status = '%s' WHERE id = 1",
+    sql.escape_literal(before)), URL)
+  if not ok then error(err) end
 end)
 
 print(string.format("\nmysql_integration_spec: %d passed, %d failed", pass, fail))
