@@ -12,3 +12,6 @@ assets/*.png
 assets/*.gif
 docs/plans
 .claude
+
+# Внутренний протокол код-ревью — держим локально, не в публичном репо
+CODE_REVIEW.md
