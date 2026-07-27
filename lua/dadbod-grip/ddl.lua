@@ -20,20 +20,43 @@ local CASCADE_KINDS = { postgresql = true, duckdb = true }
 -- of schema) -- see M._filter_referencing below.
 local SCHEMA_EXACT_REF_KINDS = { postgresql = true, mysql = true, duckdb = true, sqlite = true }
 
--- Guard against the one case where a single-query lookup can be less precise
--- than the old per-table scan: table_name is schema-qualified (e.g.
--- "sales.orders") and the adapter has no dedicated reverse-FK query, so the
--- match came from db.lua's bare-name fallback and may actually belong to a
--- same-named table in a different schema. None of the returned rows carry
--- which schema they matched against, so there is no way to tell the genuine
--- ones apart -- drop the whole batch rather than risk a false CASCADE or
--- warning. This is also exactly what the old scan did in that combination:
+local function bare(name)
+  return (name or ""):match("([^.]+)$")
+end
+
+-- Two guards keeping the single-query lookup as strict as the old per-table
+-- scan it replaced.
+--
+-- (1) Self-references. No adapter's reverse-FK query excludes the target table
+-- itself, but the old scan did (`if tbl.name ~= table_name`). A hierarchy
+-- column (parent_id, manager_id) is not a reason to CASCADE: dropping the
+-- table drops its own constraint anyway. Counting it would silently widen
+-- DROP TABLE into "CASCADE" on postgresql/duckdb -- which also drops dependent
+-- views and other tables' constraints -- and produce a bogus "dependent
+-- foreign keys won't be dropped" warning elsewhere. Names are compared bare
+-- because postgresql returns child tables schema-qualified while table_name
+-- may not be; the worst case is dropping a genuine inbound FK from a
+-- same-named table in another schema, which only loses a CASCADE the server
+-- would then refuse -- the safe direction.
+--
+-- (2) A schema-qualified table_name on an adapter with no dedicated reverse-FK
+-- query, so the match came from db.lua's bare-name fallback and may actually
+-- belong to a same-named table in a different schema. None of the returned
+-- rows carry which schema they matched against, so there is no way to tell the
+-- genuine ones apart -- drop the whole batch rather than risk a false CASCADE
+-- or warning. This is also exactly what the old scan did in that combination:
 -- it compared against fk.ref_table, which every adapter returns unqualified,
 -- so a schema-qualified table_name never matched there either.
 local function filter_referencing(refs, table_name, kind)
-  if SCHEMA_EXACT_REF_KINDS[kind] then return refs end
-  if not table_name:find(".", 1, true) then return refs end
-  return {}
+  if not SCHEMA_EXACT_REF_KINDS[kind] and table_name:find(".", 1, true) then
+    return {}
+  end
+  local target = bare(table_name)
+  local out = {}
+  for _, ref in ipairs(refs) do
+    if bare(ref.table) ~= target then table.insert(out, ref) end
+  end
+  return out
 end
 
 local _ag = vim.api.nvim_create_augroup("DadbodGripDDL", { clear = true })
@@ -282,8 +305,8 @@ function M.drop_table(table_name, url, on_done)
   local kind = adapters.kind(url)
 
   -- Check for FK dependents: one query instead of a get_foreign_keys() spawn
-  -- per other table in the schema (see filter_referencing above for the one
-  -- adjustment needed to keep this as strict as that old per-table scan).
+  -- per other table in the schema (see filter_referencing above for the two
+  -- adjustments needed to keep this as strict as that old per-table scan).
   local refs = db.get_referencing_foreign_keys(table_name, url) or {}
   refs = filter_referencing(refs, table_name, kind)
 

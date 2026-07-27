@@ -253,6 +253,42 @@ test("filter_referencing: empty input stays empty", function()
   eq(#out, 0, "nothing to filter")
 end)
 
+-- A self-reference (employees.manager_id -> employees.id) is not an inbound
+-- dependency: dropping the table drops its own constraint. No adapter's
+-- reverse-FK query excludes it, but the old per-table scan did, so the filter
+-- has to. Counting it would append CASCADE on postgresql/duckdb for every
+-- table with a parent_id/manager_id column.
+
+test("filter_referencing: self-reference is not an inbound dependency, any kind", function()
+  local refs = { { table = "employees", column = "manager_id", ref_column = "id" } }
+  for _, kind in ipairs({ "postgresql", "mysql", "duckdb", "sqlite", "sqlserver" }) do
+    local out = ddl._filter_referencing(refs, "employees", kind)
+    eq(#out, 0, "kind=" .. kind .. " must not treat a self-FK as a dependent")
+  end
+  local out = ddl._filter_referencing(refs, "employees", nil)
+  eq(#out, 0, "kind=nil must not treat a self-FK as a dependent")
+end)
+
+test("filter_referencing: self-reference dropped, genuine inbound FK kept", function()
+  local refs = {
+    { table = "employees", column = "team_id", ref_column = "id" },
+    { table = "teams", column = "parent_team_id", ref_column = "id" },
+  }
+  local out = ddl._filter_referencing(refs, "teams", "postgresql")
+  eq(#out, 1, "only the self-FK is filtered")
+  eq(out[1].table, "employees", "the real dependent survives")
+end)
+
+test("filter_referencing: self-reference matched on bare name across schemas", function()
+  -- postgresql returns child tables schema-qualified; the drop target may be
+  -- bare (public) or qualified, so both directions must recognise the self-FK.
+  local qualified = { { table = "sales.orders", column = "parent_id", ref_column = "id" } }
+  eq(#ddl._filter_referencing(qualified, "sales.orders", "postgresql"), 0, "both qualified")
+  eq(#ddl._filter_referencing(qualified, "orders", "postgresql"), 0, "target bare")
+  local plain = { { table = "orders", column = "parent_id", ref_column = "id" } }
+  eq(#ddl._filter_referencing(plain, "public.orders", "postgresql"), 0, "row bare")
+end)
+
 -- ── DDL SQL patterns: add column ─────────────────────────────────────────────
 
 test("add column SQL: basic format", function()
