@@ -5,9 +5,14 @@
 -- when actually needed for type resolution) and writes at most once. These
 -- tests pin the observable behavior of that rewrite against real files in an
 -- isolated temp directory, since nothing in the suite previously exercised it.
-local connections = require("dadbod-grip.connections")
 local paths = require("dadbod-grip.paths")
 local grip = require("dadbod-grip")
+
+-- Rebound to a freshly loaded module by every with_real_file() below, because
+-- connections.lua keeps per-URL health in a module-local table with no reset
+-- hook: without the reload, a switch() in one test leaves its URL marked "ok"
+-- for every later case.
+local connections = require("dadbod-grip.connections")
 
 local pass = 0
 local fail = 0
@@ -42,6 +47,9 @@ end
 --   so patching project_root reaches it either way.
 -- - vim.fn.expand("~") is patched to a fake home so the global connections
 --   file used by tests never touches the real ~/.grip/connections.json.
+-- - the module under test is reloaded per call so its module-local state
+--   (notably the _health table set_health writes to) starts empty; the
+--   file-level `connections` alias is rebound to that instance.
 local function with_real_file(fn)
   local project_dir = vim.fn.tempname() .. "_grip_conn_test"
   local fake_home = project_dir .. "_home"
@@ -59,6 +67,7 @@ local function with_real_file(fn)
   local orig_query_pad = package.loaded["dadbod-grip.query_pad"]
   local orig_completion = package.loaded["dadbod-grip.completion"]
   local orig_duckdb = package.loaded["dadbod-grip.adapters.duckdb"]
+  local orig_connections = package.loaded["dadbod-grip.connections"]
 
   paths.project_root = function() return project_dir end
   vim.fn.expand = function(a, ...)
@@ -78,6 +87,8 @@ local function with_real_file(fn)
   package.loaded["dadbod-grip.query_pad"] = { open = function() end }
   package.loaded["dadbod-grip.completion"] = { invalidate = function() end, warm_schema = function() end }
   package.loaded["dadbod-grip.adapters.duckdb"] = { load_attachments = function() end }
+  package.loaded["dadbod-grip.connections"] = nil
+  connections = require("dadbod-grip.connections")
 
   local local_grip = project_dir .. "/.grip"
   local global_grip = fake_home .. "/.grip"
@@ -95,6 +106,8 @@ local function with_real_file(fn)
   package.loaded["dadbod-grip.query_pad"] = orig_query_pad
   package.loaded["dadbod-grip.completion"] = orig_completion
   package.loaded["dadbod-grip.adapters.duckdb"] = orig_duckdb
+  package.loaded["dadbod-grip.connections"] = orig_connections
+  connections = orig_connections
 
   vim.fn.delete(project_dir, "rf")
   vim.fn.delete(fake_home, "rf")
@@ -161,6 +174,20 @@ test("switch: write happens when a name is given for a brand-new URL", function(
     eq(#data, 1, "inserted")
     eq(data[1].name, "brand-new", "name")
     eq(data[1].type, nil, "type field derives from is_file_url, not conn_type")
+  end)
+end)
+
+-- ── module-local health state does not leak between tests ─────────────────
+-- Placed after the switch() cases above on purpose: they all switch to this
+-- same URL, so without the per-test module reload in with_real_file the first
+-- assertion below reads their leftover "ok" instead of a clean slate.
+
+test("switch: health state starts clean in every test, then switch records it", function()
+  with_real_file(function()
+    eq(connections.get_health("postgresql://u:p@h/db"), "unknown",
+      "no health carried in from an earlier test's switch()")
+    connections.switch("postgresql://u:p@h/db", nil, "postgresql", {})
+    eq(connections.get_health("postgresql://u:p@h/db"), "ok", "switch marks the connection healthy")
   end)
 end)
 
