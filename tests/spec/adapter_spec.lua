@@ -974,6 +974,237 @@ test("sqlite get_schema_batch: failure returns nil", function()
   eq(result, nil, "should return nil on failure")
 end)
 
+-- ── get_schema_batch_async ───────────────────────────────────────────────────
+-- warm_schema pre-fills the completion cache off the keystroke path, so every
+-- adapter that can batch-fetch synchronously must also do it asynchronously.
+-- The contract mirrors the DuckDB implementation: callback(tables) on success,
+-- callback(nil) on any failure, delivered from the main loop via vim.schedule.
+
+--- Drive an async batch call to completion and return what it passed back.
+--- run_cmd_async hands the callback to vim.schedule, so the loop must be pumped
+--- before asserting; a callback that never fires is a failure, not a nil result.
+local function await_batch(call)
+  local done, got = false, nil
+  call(function(tables) got = tables; done = true end)
+  vim.wait(2000, function() return done end, 1)
+  assert(done, "async callback never fired")
+  return got
+end
+
+local function eq_argv(a, b, msg)
+  eq(#a, #b, (msg or "") .. ": argv length")
+  for i = 1, #a do
+    eq(a[i], b[i], string.format("%s: argv[%d]", msg or "", i))
+  end
+end
+
+-- The whole point of the shared SQL/parser helpers: if the async path ever
+-- builds a different command line than the blocking one, the two can return
+-- different schemas for the same database. Comparing argv catches both a
+-- diverging statement and diverging CLI flags in one assertion.
+local BATCH_ARGV_CASES = {
+  { name = "pg",        mod = pg,        url = "postgresql://localhost/test" },
+  { name = "mysql",     mod = mysql,     url = "mysql://root:pass@localhost/testdb" },
+  { name = "sqlite",    mod = sqlite,    url = "sqlite:test.db" },
+  { name = "sqlserver", mod = sqlserver, url = "sqlserver://sa:pw@localhost:1433/testdb" },
+}
+
+for _, case in ipairs(BATCH_ARGV_CASES) do
+  test(case.name .. " get_schema_batch_async: identical argv to the blocking path", function()
+    local sync_argv, async_argv
+    with_executable(function()
+      sync_argv = capture_system_args("", function()
+        case.mod.get_schema_batch(case.url)
+      end)
+      async_argv = capture_system_args("", function()
+        await_batch(function(cb) case.mod.get_schema_batch_async(case.url, cb) end)
+      end)
+    end)
+    assert(sync_argv ~= nil, case.name .. ": blocking path must spawn a process")
+    assert(async_argv ~= nil, case.name .. ": async path must spawn a process")
+    eq_argv(async_argv, sync_argv, case.name .. " async argv must match sync argv")
+  end)
+end
+
+-- Adapters must not silently lose the async variant: warm_schema is a no-op
+-- without it, which is exactly the regression this section exists to prevent.
+test("every adapter with get_schema_batch also has get_schema_batch_async", function()
+  local mods = {
+    postgresql = pg, mysql = mysql, sqlite = sqlite,
+    sqlserver = sqlserver, duckdb = duckdb,
+  }
+  for name, mod in pairs(mods) do
+    assert(type(mod.get_schema_batch) == "function", name .. " must have get_schema_batch")
+    assert(type(mod.get_schema_batch_async) == "function",
+      name .. " must have get_schema_batch_async (warm_schema is a no-op without it)")
+  end
+end)
+
+test("pg get_schema_batch_async: delivers columns keyed by table name", function()
+  local csv_stdout = table.concat({
+    "table_schema,table_name,column_name,data_type,is_nullable",
+    "public,users,id,integer,NO",
+    "public,users,email,text,NO",
+    "analytics,events,ts,timestamp,NO",
+  }, "\n") .. "\n"
+
+  local result
+  with_system_mock(csv_stdout, "", 0, function()
+    result = await_batch(function(cb) pg.get_schema_batch_async("postgresql://localhost/test", cb) end)
+  end)
+
+  assert(result ~= nil, "result must not be nil")
+  assert(result["users"] ~= nil, "must have users key")
+  eq(#result["users"], 2, "users has 2 columns")
+  eq(result["users"][1].column_name, "id", "column order follows ordinal_position")
+  eq(result["users"][2].data_type, "text", "email data type")
+  assert(result["analytics.events"] ~= nil, "non-public schema keeps its prefix")
+end)
+
+test("pg get_schema_batch_async: psql failure delivers nil", function()
+  local result = "unset"
+  with_system_mock("", "connection refused", 1, function()
+    result = await_batch(function(cb) pg.get_schema_batch_async("postgresql://localhost/test", cb) end)
+  end)
+  eq(result, nil, "should deliver nil on failure")
+end)
+
+test("mysql get_schema_batch_async: delivers columns keyed by table name", function()
+  local tsv_stdout = table.concat({
+    "table_name\tcolumn_name\tdata_type\tis_nullable",
+    "customers\tcust_id\tint\tNO",
+    "customers\tregion\tvarchar(255)\tYES",
+    "products\tsku\tvarchar(50)\tNO",
+  }, "\n") .. "\n"
+
+  local result
+  with_executable(function()
+    with_system_mock(tsv_stdout, "", 0, function()
+      result = await_batch(function(cb)
+        mysql.get_schema_batch_async("mysql://root:pass@localhost/testdb", cb)
+      end)
+    end)
+  end)
+
+  assert(result ~= nil, "result must not be nil")
+  assert(result["customers"] ~= nil, "must have customers key")
+  assert(result["products"] ~= nil, "must have products key")
+  eq(#result["customers"], 2, "customers has 2 columns")
+  eq(result["customers"][2].data_type, "varchar(255)", "region data type")
+  eq(#result["products"], 1, "products has 1 column")
+end)
+
+test("mysql get_schema_batch_async: mysql failure delivers nil", function()
+  local result = "unset"
+  with_executable(function()
+    with_system_mock("", "access denied", 1, function()
+      result = await_batch(function(cb)
+        mysql.get_schema_batch_async("mysql://root:pass@localhost/testdb", cb)
+      end)
+    end)
+  end)
+  eq(result, nil, "should deliver nil on failure")
+end)
+
+test("mysql get_schema_batch_async: unparseable URL delivers nil without spawning", function()
+  local spawned = false
+  local orig = vim.system
+  vim.system = function(...) spawned = true; return orig(...) end
+  local result = await_batch(function(cb) mysql.get_schema_batch_async("mysql://", cb) end)
+  vim.system = orig
+  eq(result, nil, "should deliver nil for an unparseable URL")
+  assert(not spawned, "must not spawn mysql for an unparseable URL")
+end)
+
+test("sqlite get_schema_batch_async: delivers columns keyed by table name", function()
+  local csv_stdout = table.concat({
+    "table_name,column_name,data_type,is_nullable",
+    "orders,id,INTEGER,YES",
+    "users,id,INTEGER,YES",
+    "users,name,TEXT,NO",
+  }, "\n") .. "\n"
+
+  local result
+  with_system_mock(csv_stdout, "", 0, function()
+    result = await_batch(function(cb) sqlite.get_schema_batch_async("sqlite:test.db", cb) end)
+  end)
+
+  assert(result ~= nil, "result must not be nil")
+  assert(result["users"] ~= nil, "must have users key")
+  assert(result["orders"] ~= nil, "must have orders key")
+  eq(#result["users"], 2, "users has 2 columns")
+  eq(result["users"][2].column_name, "name", "column order follows cid")
+  eq(result["users"][2].is_nullable, "NO", "name is NOT NULL")
+  eq(#result["orders"], 1, "orders has 1 column")
+end)
+
+test("sqlite get_schema_batch_async: failure delivers nil", function()
+  local result = "unset"
+  with_system_mock("", "unable to open database", 1, function()
+    result = await_batch(function(cb) sqlite.get_schema_batch_async("sqlite:nope.db", cb) end)
+  end)
+  eq(result, nil, "should deliver nil on failure")
+end)
+
+test("sqlite get_schema_batch_async: pathless URL delivers nil without spawning", function()
+  local spawned = false
+  local orig = vim.system
+  vim.system = function(...) spawned = true; return orig(...) end
+  local result = await_batch(function(cb) sqlite.get_schema_batch_async("sqlite:", cb) end)
+  vim.system = orig
+  eq(result, nil, "should deliver nil when no path can be extracted")
+  assert(not spawned, "must not spawn sqlite3 without a db path")
+end)
+
+test("sqlserver get_schema_batch_async: delivers columns keyed by table name", function()
+  local tsv_stdout = table.concat({
+    "table_name\tCOLUMN_NAME\tdata_type\tIS_NULLABLE",
+    "invoices\tid\tint\tNO",
+    "invoices\tamount\tdecimal(10,2)\tYES",
+    "sales.leads\tid\tint\tNO",
+  }, "\n") .. "\n"
+
+  local result
+  with_executable(function()
+    with_system_mock(tsv_stdout, "", 0, function()
+      result = await_batch(function(cb)
+        sqlserver.get_schema_batch_async("sqlserver://sa:pw@localhost:1433/testdb", cb)
+      end)
+    end)
+  end)
+
+  assert(result ~= nil, "result must not be nil")
+  assert(result["invoices"] ~= nil, "must have invoices key")
+  eq(#result["invoices"], 2, "invoices has 2 columns")
+  eq(result["invoices"][2].data_type, "decimal(10,2)", "amount data type")
+  assert(result["sales.leads"] ~= nil, "non-dbo schema keeps its prefix")
+end)
+
+test("sqlserver get_schema_batch_async: sqlcmd failure delivers nil", function()
+  local result = "unset"
+  with_executable(function()
+    with_system_mock("", "login failed", 1, function()
+      result = await_batch(function(cb)
+        sqlserver.get_schema_batch_async("sqlserver://sa:pw@localhost:1433/testdb", cb)
+      end)
+    end)
+  end)
+  eq(result, nil, "should deliver nil on failure")
+end)
+
+test("sqlserver get_schema_batch_async: missing sqlcmd delivers nil without spawning", function()
+  local spawned = false
+  local orig_sys, orig_exe = vim.system, vim.fn.executable
+  vim.system = function(...) spawned = true; return orig_sys(...) end
+  vim.fn.executable = function() return 0 end
+  local result = await_batch(function(cb)
+    sqlserver.get_schema_batch_async("sqlserver://sa:pw@localhost:1433/testdb", cb)
+  end)
+  vim.system, vim.fn.executable = orig_sys, orig_exe
+  eq(result, nil, "should deliver nil when sqlcmd is absent")
+  assert(not spawned, "must not spawn a missing sqlcmd")
+end)
+
 -- ── SQLite get_indexes ───────────────────────────────────────────────────────
 -- Single pragma_index_list/pragma_index_info join (one spawn) replaces the old
 -- index_list-then-loop-over-index_info (one spawn per index).
