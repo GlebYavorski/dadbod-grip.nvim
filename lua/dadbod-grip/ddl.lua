@@ -29,7 +29,11 @@ local SCHEMA_EXACT_REF_KINDS = {
 -- returns "b.c" from it, not "c" as bare() does; a quoted identifier
 -- ('schema."quoted table"') comes back unquoted from split_table_name but
 -- untouched from bare(); and the degenerate inputs "", "." and "schema."
--- disagree outright (nil / "" / "schema" here vs "" / "" / "schema" there).
+-- disagree too: bare() returns nil for all three (there is no non-dot run
+-- for "([^.]+)$" to match at all), while split_table_name's tbl half returns
+-- "", "" and "schema" respectively (its regex falls back to the whole
+-- string, but unquote_ident's gmatch-based rebuild drops a trailing dot with
+-- nothing after it).
 -- None of that is reachable through the adapters today (every
 -- get_referencing_foreign_keys() and table_name passed to drop_table is a
 -- plain, unquoted, at-most-one-dot string), so the two happen to agree on
