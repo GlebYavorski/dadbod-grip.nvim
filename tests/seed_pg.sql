@@ -418,6 +418,20 @@ $$;
 
 CREATE SCHEMA admin;
 
+-- A table outside the public schema, so that schema qualification in
+-- list_tables / get_schema_batch ("admin.audit_log", not a bare "audit_log")
+-- has something to be tested against. The schema used to hold only a function.
+CREATE TABLE admin.audit_log (
+  id     integer PRIMARY KEY,
+  action varchar(50) NOT NULL,
+  note   text
+);
+
+INSERT INTO admin.audit_log (id, action, note) VALUES
+  (1, 'login',  'first sign-in'),
+  (2, 'update', NULL),
+  (3, 'delete', 'row 7 removed');
+
 CREATE FUNCTION admin.audit_touch()
 RETURNS text
 LANGUAGE sql

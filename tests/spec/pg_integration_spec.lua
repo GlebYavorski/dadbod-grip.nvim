@@ -112,6 +112,8 @@ test("list_tables includes tables, views, quoted names", function()
   eq(by_name["users"], "table", "users")
   eq(by_name["no_pk_view"], "view", "view")
   eq(by_name["Participant"], "table", "PascalCase table listed")
+  eq(by_name["admin.audit_log"], "table", "non-public table is schema-qualified")
+  assert(by_name["audit_log"] == nil, "a non-public table must not appear under its bare name")
 end)
 
 test("get_column_info / get_primary_keys handle quoted and composite", function()
@@ -141,6 +143,24 @@ test("get_foreign_keys / get_indexes / get_table_stats / get_schema_batch", func
   local batch = pg.get_schema_batch(URL)
   assert(batch and batch["users"] and #batch["users"] == 5, "batch users columns")
   assert(batch["Participant"], "batch includes quoted table")
+end)
+
+test("get_schema_batch: non-public schema qualified as schema.table", function()
+  local batch = pg.get_schema_batch(URL)
+  assert(batch, "batch must not be nil")
+
+  local cols = batch["admin.audit_log"]
+  assert(cols, "admin.audit_log present under its qualified name")
+  assert(batch["audit_log"] == nil, "and not under its bare name")
+  eq(#cols, 3, "column count")
+  eq(cols[1].column_name, "id", "column order")
+  eq(cols[2].data_type, "character varying(50)", "declared length")
+  eq(cols[2].is_nullable, "NO", "NOT NULL column")
+  eq(cols[3].is_nullable, "YES", "nullable column")
+
+  -- The same qualified key must work as a table name for per-table lookups.
+  eq(pg.get_primary_keys("admin.audit_log", URL)[1], "id", "pk via qualified name")
+  eq(#pg.get_column_info("admin.audit_log", URL), 3, "column info via qualified name")
 end)
 
 -- ── routines (PR #17) ──────────────────────────────────────────────────
