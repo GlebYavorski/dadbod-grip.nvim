@@ -204,6 +204,15 @@ end
 --- The augroup is a parameter, not a constant: each module registers the
 --- WinLeave in its own group so that its own reload/clear keeps owning it.
 ---
+--- close() owns the whole float: it drops the autocmd, closes the window and
+--- deletes the buffer. The buffer has to go with the window — info_float's
+--- scratch buffer is unlisted with bufhidden=hide, so closing only the window
+--- leaves it hidden (and invisible to :ls) for the rest of the session, one
+--- more every time a float is opened. Deleting it is also what retires the
+--- buffer-local WinLeave when the float was opened with `enter = false`: a
+--- window that was never entered is never left, so the autocmd would otherwise
+--- outlive the float it was watching.
+---
 --- @param opts table
 ---   win        integer  the float window
 ---   buf        integer  the float buffer (keymaps and WinLeave are buffer-local)
@@ -213,11 +222,31 @@ end
 function M.dismiss_float(opts)
   local win, buf, caller_win = opts.win, opts.buf, opts.caller_win
 
+  local au_id
+
+  -- Every step is guarded and nothing is allowed to raise: close() runs twice
+  -- whenever it is called by hand from a window it is also watching (the manual
+  -- call plus the WinLeave it triggers), the window may already be gone because
+  -- the user typed :q, and the second half of it runs inside an autocmd.
   local function close()
-    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+    -- Dropping the autocmd up front, before the window goes, is what keeps
+    -- close() from being re-entered through the WinLeave that closing a focused
+    -- float fires: no redundant close gets scheduled to land after the caller
+    -- has moved on (properties.lua's gI closes and reopens in one breath).
+    -- `once = true` already dropped the id if the WinLeave did fire, hence pcall.
+    if au_id then
+      pcall(vim.api.nvim_del_autocmd, au_id)
+      au_id = nil
+    end
+    if vim.api.nvim_win_is_valid(win) then
+      pcall(vim.api.nvim_win_close, win, true)
+    end
+    if vim.api.nvim_buf_is_valid(buf) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
   end
 
-  vim.api.nvim_create_autocmd("WinLeave", {
+  au_id = vim.api.nvim_create_autocmd("WinLeave", {
     group  = opts.group,
     buffer = buf,
     once = true,

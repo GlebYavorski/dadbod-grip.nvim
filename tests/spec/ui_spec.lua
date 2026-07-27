@@ -303,30 +303,75 @@ test("dismiss_float: the returned close() closes the window directly", function(
   end)
 end)
 
-test("dismiss_float: characterization -- close() does not delete the float's buffer", function()
-  -- Not a requirement, just what happens today: close() only closes the
-  -- window (nvim_win_close); it never calls nvim_buf_delete, and neither
-  -- real call site (view.lua's popup, properties.lua) does either. Because
-  -- info_float's scratch buffer is unlisted with bufhidden=hide, it survives
-  -- as an invisible-to-:ls, hidden buffer for the rest of the session -- a
-  -- real, if minor, leak (see task-14-report.md, Concerns). This test pins
-  -- that fact on purpose: if `close()` is ever changed to delete the buffer,
-  -- this assertion must be updated deliberately, not broken by accident.
+test("dismiss_float: close() takes the float's buffer down with the window", function()
+  -- This assertion used to be inverted: it pinned the leak as characterization
+  -- (close() called nvim_win_close only, so info_float's unlisted
+  -- bufhidden=hide scratch buffer stayed alive, invisible to :ls, one more per
+  -- float for the rest of the session). Task 17 fixed the leak, so the pin
+  -- flipped by hand to the behavior we now want.
   with_dismissable_float(function(win, buf, close)
     close()
     eq(vim.api.nvim_win_is_valid(win), false, "float window closed")
-    eq(vim.api.nvim_buf_is_valid(buf), true, "buffer NOT deleted -- current behavior")
-    eq(vim.bo[buf].buflisted, false, "...but unlisted, invisible to :ls")
-    eq(vim.bo[buf].bufhidden, "hide", "...and bufhidden=hide, so it just sits hidden")
+    eq(vim.api.nvim_buf_is_valid(buf), false, "buffer deleted, not left hidden")
+  end)
+end)
+
+test("dismiss_float: enter = false -- close() still drops autocmd and buffer", function()
+  -- A float opened unfocused is never entered, so its buffer-local WinLeave can
+  -- never fire: cleanup has to come from close() itself or nothing happens at
+  -- all. Mirrors the ddl.lua/json_tree.lua style of preview float.
+  local caller_win = vim.api.nvim_get_current_win()
+  local group = vim.api.nvim_create_augroup("ui_spec_dismiss_float_noenter", { clear = true })
+  local win, buf = ui.info_float({ lines = { "x" }, width = 20, height = 2, enter = false })
+  local close = ui.dismiss_float({ win = win, buf = buf, caller_win = caller_win, group = group })
+  local ok, err = pcall(function()
+    eq(vim.api.nvim_get_current_win(), caller_win, "float was never entered")
+    close()
+    eq(vim.api.nvim_win_is_valid(win), false, "float window closed")
+    eq(vim.api.nvim_buf_is_valid(buf), false, "buffer deleted")
+    eq(#vim.api.nvim_get_autocmds({ group = group }), 0, "WinLeave dropped, not left dangling")
+  end)
+  pcall(vim.api.nvim_win_close, win, true)
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  if not ok then error(err, 0) end
+end)
+
+test("dismiss_float: close() is idempotent -- the second call is a silent no-op", function()
+  -- with_dismissable_float leaves the cursor *in* the float, so the first
+  -- close() is the reentrant case: it closes the very window whose WinLeave it
+  -- registered. Nothing may raise, and the drain below gives a WinLeave that
+  -- slipped through a chance to schedule a third close on already-dead handles.
+  with_dismissable_float(function(win, buf, close, group)
+    close()
+    local ok2, err2 = pcall(close)
+    eq(ok2, true, "second close() does not raise: " .. tostring(err2))
+    vim.wait(50)
+    eq(vim.api.nvim_win_is_valid(win), false, "window still closed")
+    eq(vim.api.nvim_buf_is_valid(buf), false, "buffer still deleted")
+    eq(#vim.api.nvim_get_autocmds({ group = group }), 0, "no autocmd left behind")
   end)
 end)
 
 test("dismiss_float: leaving the window (WinLeave) closes it without pressing q", function()
-  with_dismissable_float(function(win, _, _, _, caller_win)
+  with_dismissable_float(function(win, buf, _, _, caller_win)
     vim.api.nvim_set_current_win(win)
     vim.api.nvim_set_current_win(caller_win) -- e.g. <C-w>w away from the float
     vim.wait(200, function() return not vim.api.nvim_win_is_valid(win) end, 10)
     eq(vim.api.nvim_win_is_valid(win), false, "float window closed on WinLeave")
+    eq(vim.api.nvim_buf_is_valid(buf), false, "and its buffer went with it")
+  end)
+end)
+
+test("dismiss_float: a hand-typed :q leaves no buffer behind either", function()
+  -- The one path that bypasses close() entirely on the way in: :q closes the
+  -- window itself, and only the WinLeave it fires gets us into close() to
+  -- collect the buffer.
+  with_dismissable_float(function(win, buf)
+    vim.api.nvim_set_current_win(win)
+    vim.cmd("q")
+    vim.wait(200, function() return not vim.api.nvim_buf_is_valid(buf) end, 10)
+    eq(vim.api.nvim_win_is_valid(win), false, "float window gone")
+    eq(vim.api.nvim_buf_is_valid(buf), false, "buffer collected by the WinLeave")
   end)
 end)
 
