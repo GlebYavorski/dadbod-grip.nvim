@@ -801,9 +801,9 @@ orders → order_items. Press `<C-o>` to walk back. Composite foreign
 keys and NULL values are reported and skipped.
 
 FK metadata is fetched automatically via information_schema (PostgreSQL,
-MySQL, DuckDB) or PRAGMA foreign_key_list (SQLite). Reverse lookups use
-a single information_schema / PRAGMA query per table and are cached per
-session; adapters without a native reverse query (SQL Server) fall back
+MySQL, DuckDB), PRAGMA foreign_key_list (SQLite) or sys.foreign_keys
+(SQL Server). Reverse lookups use a single query per table and are
+cached per session; adapters without a native reverse query fall back
 to scanning each table's foreign keys once.
 
 ==============================================================================
