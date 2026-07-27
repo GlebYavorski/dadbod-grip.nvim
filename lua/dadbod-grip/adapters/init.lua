@@ -3,6 +3,15 @@
 
 local M = {}
 
+--- What both run paths report when the process never answers. One definition so
+--- callers can't tell the blocking timeout from the non-blocking one.
+local TIMED_OUT = { stdout = "", stderr = "command timed out", code = 1 }
+
+--- Grace period beyond the process timeout, absorbing on_exit callback latency:
+--- how long the blocking path keeps polling, and when the non-blocking path's
+--- watchdog fires. Exported so tests can shorten the wait.
+M._exit_grace_ms = 3000
+
 --- Run a CLI command and wait for it to finish, pumping the full Neovim event
 --- loop during the wait. This allows vim.schedule_wrap timer callbacks (such as
 --- the ui.blocking spinner) to fire while a CLI process is in progress.
@@ -36,9 +45,8 @@ function M.run_cmd(args, timeout_ms, opts)
   -- Poll at 1ms so done is detected immediately after the on_exit callback fires.
   -- The 80ms spinner timer fires when vim.wait pumps the event loop regardless of
   -- poll interval; tight polling just reduces per-call overhead in tests.
-  -- Add 3s buffer beyond the process timeout to absorb on_exit callback latency.
-  vim.wait(t + 3000, function() return done end, 1)
-  local r = out or { stdout = "", stderr = "command timed out", code = 1 }
+  vim.wait(t + M._exit_grace_ms, function() return done end, 1)
+  local r = out or TIMED_OUT
   return r.stdout or "", r.stderr or "", r.code
 end
 
@@ -52,17 +60,41 @@ end
 --- (ENOENT when the CLI is not installed), so that is caught and reported as a
 --- non-zero exit instead of escaping into the caller's callback-free stack.
 ---
+--- An on_exit that never fires would strand the caller forever -- there is no
+--- vim.wait here to notice -- so a watchdog delivers the same TIMED_OUT answer
+--- the blocking path falls back to, at the same deadline.
+---
 --- @param args  string[]   argv for vim.system
 --- @param timeout_ms number|nil  process timeout in ms (default 30000)
 --- @param callback fun(stdout: string, stderr: string, code: number)
 function M.run_cmd_async(args, timeout_ms, callback)
-  local ok, err = pcall(vim.system, args, { text = true, timeout = timeout_ms or 30000 }, function(r)
+  local t = timeout_ms or 30000
+  local watchdog
+  local delivered = false
+
+  -- Whichever of on_exit, the spawn failure and the watchdog gets here first
+  -- wins; the callback must run exactly once.
+  local function deliver(stdout, stderr, code)
+    if delivered then return end
+    delivered = true
+    if watchdog and not watchdog:is_closing() then
+      watchdog:stop()
+      watchdog:close()
+    end
+    callback(stdout, stderr, code)
+  end
+
+  watchdog = vim.defer_fn(function()
+    deliver(TIMED_OUT.stdout, TIMED_OUT.stderr, TIMED_OUT.code)
+  end, t + M._exit_grace_ms)
+
+  local ok, err = pcall(vim.system, args, { text = true, timeout = t }, function(r)
     vim.schedule(function()
-      callback(r.stdout or "", r.stderr or "", r.code)
+      deliver(r.stdout or "", r.stderr or "", r.code)
     end)
   end)
   if not ok then
-    vim.schedule(function() callback("", tostring(err), 1) end)
+    vim.schedule(function() deliver("", tostring(err), 1) end)
   end
 end
 
