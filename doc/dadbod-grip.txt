@@ -353,7 +353,8 @@ All commands are global and available after the plugin loads.
   Query Doctor: translates EXPLAIN plans into plain-English health
   checks. Shows severity (SLOW/WARN/OK), proportional cost bars,
   and actionable suggestions (e.g. "add an index on the filtered
-  column"). Works across PostgreSQL, MySQL, DuckDB, and SQLite.
+  column"). Works across PostgreSQL, MySQL, DuckDB, SQLite, and
+  SQL Server.
 
                                                           *:GripProperties*
 :GripProperties [table]
@@ -1139,11 +1140,12 @@ Severity rules adapt to context:
   - Nested loops with few rows downgrade to OK
   - Filters with low cost (<500) downgrade to OK
 
-Works across all four adapters:
+Works across all five adapters:
   - PostgreSQL: full cost and actual timing from EXPLAIN ANALYZE
   - MySQL: cost and row estimates
   - DuckDB: estimated cardinality
   - SQLite: EXPLAIN QUERY PLAN operations
+  - SQL Server: SHOWPLAN_TEXT operator tree, no cost estimates
 
 ==============================================================================
 22. AI SQL GENERATION                                             *grip-ai*
