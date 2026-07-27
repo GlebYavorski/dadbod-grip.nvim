@@ -214,11 +214,12 @@ end)
 
 -- ── drop table: referencing-FK filter (M._filter_referencing) ───────────────
 -- drop_table replaced its N+1 per-table FK scan with one call to
--- db.get_referencing_foreign_keys(). That query is schema-exact on
--- postgresql/mysql/duckdb/sqlite; sqlserver has no dedicated implementation
--- and falls back (in db.lua) to a bare-name scan that can't distinguish two
--- same-named tables in different schemas. _filter_referencing is the guard
--- that keeps that one combination from widening past the old scan's strictness.
+-- db.get_referencing_foreign_keys(). Every adapter shipped today answers that
+-- with its own schema-exact query. An adapter without one falls back (in
+-- db.lua) to a bare-name scan that can't distinguish two same-named tables in
+-- different schemas; _filter_referencing is the guard that keeps that
+-- combination from widening past the old scan's strictness, so the cases below
+-- exercise it with a kind that is deliberately not in SCHEMA_EXACT_REF_KINDS.
 
 test("filter_referencing: bare table name is never filtered, any kind", function()
   -- A trailing nil in the list literal would end ipairs early and silently skip
@@ -233,7 +234,7 @@ end)
 
 test("filter_referencing: schema-qualified name kept for schema-exact adapters", function()
   local refs = { { table = "orders", column = "user_id", ref_column = "id" } }
-  for _, kind in ipairs({ "postgresql", "mysql", "duckdb", "sqlite" }) do
+  for _, kind in ipairs({ "postgresql", "mysql", "duckdb", "sqlite", "sqlserver" }) do
     local out = ddl._filter_referencing(refs, "public.users", kind)
     eq(#out, 1, "kind=" .. kind .. " should keep exact-schema matches")
   end
@@ -241,8 +242,11 @@ end)
 
 test("filter_referencing: schema-qualified name dropped for adapters without a dedicated query", function()
   local refs = { { table = "orders", column = "user_id", ref_column = "id" } }
-  local out = ddl._filter_referencing(refs, "dbo.users", "sqlserver")
-  eq(#out, 0, "sqlserver bare-name fallback can't be trusted for a qualified name")
+  -- No shipped adapter kind lands here any more, so the input is a hypothetical
+  -- one: this guard is what protects the next adapter added without its own
+  -- reverse-FK query.
+  local out = ddl._filter_referencing(refs, "dbo.users", "adapter_without_reverse_fk_query")
+  eq(#out, 0, "a bare-name fallback can't be trusted for a qualified name")
 end)
 
 test("filter_referencing: unresolved/unknown kind treated like a non-exact adapter", function()
