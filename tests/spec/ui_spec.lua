@@ -128,6 +128,25 @@ end)
 vim.o.lines   = 40
 vim.o.columns = 120
 
+--- Run fn() with the editor's window chrome deliberately switched on, then
+--- restore it. style = "minimal" only shows up as a difference against
+--- non-minimal defaults: with the stock headless options every one of the
+--- options it turns off is already off, so a float opened without the style
+--- would look exactly the same.
+local function with_chrome(fn)
+  local chrome = { number = true, relativenumber = true, list = true,
+                   cursorline = true, foldcolumn = "2", colorcolumn = "80",
+                   signcolumn = "yes:2" }
+  local saved = {}
+  for opt, value in pairs(chrome) do
+    saved[opt] = vim.o[opt]
+    vim.o[opt] = value
+  end
+  local ok, err = pcall(fn)
+  for opt, value in pairs(saved) do vim.o[opt] = value end
+  if not ok then error(err, 0) end
+end
+
 --- Open a float, hand (win, buf, config) to fn, then always clean up.
 local function with_float(opts, fn)
   local win, buf = ui.info_float(opts)
@@ -150,7 +169,28 @@ test("info_float: centers on the editor by default", function()
     eq(cfg.relative, "editor", "relative")
     eq(cfg.row, math.floor((40 - 10) / 2), "row centered")
     eq(cfg.col, math.floor((120 - 40) / 2), "col centered")
-    eq(cfg.style, "minimal", "style")
+  end)
+end)
+
+-- style = "minimal" is pinned through its effects rather than through
+-- nvim_win_get_config(): the returned config only reports `style` back from
+-- Neovim 0.11 on, and on the supported 0.10 baseline the key is simply absent.
+-- What "minimal" *does* is identical on both -- 'number', 'relativenumber',
+-- 'list' and 'cursorline' off, 'foldcolumn' "0", 'colorcolumn' cleared,
+-- 'signcolumn' back to "auto" -- and with_chrome turns all of that on
+-- editor-wide first, so a float that lost the style would inherit the chrome
+-- and fail every assertion below.
+test("info_float: opens the float in the minimal style", function()
+  with_chrome(function()
+    with_float({ lines = { "x" }, width = 40, height = 10 }, function(win)
+      eq(vim.wo[win].number, false, "'number' off")
+      eq(vim.wo[win].relativenumber, false, "'relativenumber' off")
+      eq(vim.wo[win].list, false, "'list' off")
+      eq(vim.wo[win].cursorline, false, "'cursorline' off")
+      eq(vim.wo[win].foldcolumn, "0", "'foldcolumn' cleared")
+      eq(vim.wo[win].colorcolumn, "", "'colorcolumn' cleared")
+      eq(vim.wo[win].signcolumn, "auto", "'signcolumn' back to auto")
+    end)
   end)
 end)
 
@@ -398,6 +438,23 @@ test("dismiss_float: repeated open/close cycles never accumulate autocmds", func
 end)
 
 -- ── report_split ────────────────────────────────────────────────────────────
+-- report_split asks nvim for a height and gets whatever is still free, so the
+-- tests below need a known editor geometry: 40 lines (already set for the
+-- floats above), a one-line cmdline, and a window that actually occupies the
+-- rest of the screen.
+--
+-- All three have to be stated. The cmdline prompts driven further up scroll
+-- messages past the cmdline, which on Neovim 0.10 leaves 'cmdheight' inflated
+-- -- 17 rows by the time we get here, so only 20 of the 30 requested rows are
+-- still free and the cap assertion measures the screen instead of the cap.
+-- Lowering 'cmdheight' is not enough on its own: the window does not grow into
+-- the freed rows, and the next time nvim recomputes the layout (the first
+-- botright split below) it hands them straight back to the cmdline. Asking for
+-- an over-tall window makes the layout reclaim them for good -- nvim clamps the
+-- request to whatever the single window may actually have.
+vim.o.lines     = 40
+vim.o.cmdheight = 1
+vim.api.nvim_win_set_height(0, vim.o.lines)
 
 test("report_split: read-only named scratch buffer in a bottom split", function()
   local before = win_count()
