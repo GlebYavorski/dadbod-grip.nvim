@@ -332,22 +332,93 @@ local function open_welcome_and_wait()
   return buf, marks
 end
 
-test("open_welcome: highlights every logo/legend/keymap region once scheduled", function()
+-- Every highlight group the welcome screen uses, with a predicate for what a
+-- mark of that group is allowed to cover. Together with "every rendered line
+-- carries at least one mark" below, this replaces the totals this test used to
+-- pin (62 marks, 42 of them Identifier) -- numbers that had to be recounted by
+-- hand after any edit to the logo or the keymap rows, and that said nothing
+-- about *where* the highlights landed.
+local WELCOME_GROUPS = {
+  -- Section headers, bottom separator and tagline: the whole line.
+  Comment      = function(text, line) return text == line end,
+  -- Logo box rows (╔ ║ ╚): the whole line.
+  Special      = function(text, line) return text == line end,
+  -- The plugin name plus the version that follows it, to end of line.
+  Title        = function(text) return text:match("^dadbod%-grip") ~= nil end,
+  Statement    = function(text) return text:match("^:Grip%S*$") ~= nil end,
+  -- Keymap keys and --flags: always one whitespace-free token.
+  Identifier   = function(text) return text:match("^%S+$") ~= nil end,
+  GripModified = function(text) return text == "violet = modified" end,
+  GripInserted = function(text) return text == "green = inserted" end,
+  GripDeleted  = function(text) return text == "red = deleted" end,
+}
+
+test("open_welcome: every rendered line is highlighted, and every mark fits its group", function()
   local buf, marks = open_welcome_and_wait()
-  local by_group = {}
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+
+  local seen_groups, per_line = {}, {}
   for _, m in ipairs(marks) do
-    local g = m[4].hl_group
-    by_group[g] = (by_group[g] or 0) + 1
+    local row, col, det = m[2], m[3], m[4]
+    local line = lines[row + 1]
+    assert(line, "mark sits on rendered row " .. row)
+    local pred = WELCOME_GROUPS[det.hl_group]
+    assert(pred, "unexpected highlight group on the welcome screen: " .. tostring(det.hl_group))
+    assert(det.end_col and det.end_col > col and det.end_col <= #line,
+      det.hl_group .. " mark on line " .. (row + 1) .. " covers a non-empty range inside the line")
+    local text = line:sub(col + 1, det.end_col)
+    assert(pred(text, line),
+      det.hl_group .. " on line " .. (row + 1) .. " covers '" .. text .. "', not what that group marks up")
+    seen_groups[det.hl_group] = true
+    per_line[row] = (per_line[row] or 0) + 1
   end
-  eq(#marks, 62, "total extmarks")
-  eq(by_group.Comment, 9, "section headers + tagline")
-  eq(by_group.Special, 3, "logo box lines (╔ ║ ╚)")
-  eq(by_group.Title, 1, "dadbod-grip title")
-  eq(by_group.Statement, 4, ":Grip command examples")
-  eq(by_group.Identifier, 42, "keymap columns + --flags")
-  eq(by_group.GripModified, 1, "legend: modified")
-  eq(by_group.GripInserted, 1, "legend: inserted")
-  eq(by_group.GripDeleted, 1, "legend: deleted")
+
+  for group in pairs(WELCOME_GROUPS) do
+    assert(seen_groups[group], "no " .. group .. " highlight was applied anywhere")
+  end
+
+  -- Blank lines are the only unhighlighted ones: a branch that stops firing
+  -- leaves its lines bare, which is what the old total was really guarding.
+  for i, line in ipairs(lines) do
+    if line ~= "" then
+      assert((per_line[i - 1] or 0) > 0, "line " .. i .. " is rendered but unhighlighted: " .. line)
+    end
+  end
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+end)
+
+test("open_welcome: keymap rows highlight both keys of the two-column layout", function()
+  -- Keymap rows put the left key at byte 2 and, when they have one, a
+  -- right-hand key at byte 31 (0-indexed) -- see the keymap branch in
+  -- init.lua. Rows are recognised by their own left-key mark instead of by
+  -- re-deriving init.lua's line classifier, so this follows the logo text
+  -- around: adding or reflowing a keymap row needs no edit here.
+  local buf, marks = open_welcome_and_wait()
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+
+  local idents = {}  -- row -> { [start_col] = end_col } for Identifier marks
+  for _, m in ipairs(marks) do
+    if m[4].hl_group == "Identifier" then
+      idents[m[2]] = idents[m[2]] or {}
+      idents[m[2]][m[3]] = m[4].end_col
+    end
+  end
+
+  local rows_checked = 0
+  for row, starts in pairs(idents) do
+    if starts[2] then  -- a key at byte 2: this row is a keymap row
+      local line = lines[row + 1]
+      local _, after = line:match("^  (%S+)()")
+      eq(starts[2], after - 1, "left key spans exactly its token on line " .. (row + 1))
+      if #line >= 34 and line:sub(32, 32) ~= " " then
+        local rs, re = line:find("%S+", 32)
+        assert(starts[rs - 1] == re, "right-column key '" .. line:sub(rs, re)
+          .. "' on line " .. (row + 1) .. " is not highlighted as its own token")
+      end
+      rows_checked = rows_checked + 1
+    end
+  end
+  assert(rows_checked > 0, "the welcome screen still has keymap rows to check")
   pcall(vim.api.nvim_buf_delete, buf, { force = true })
 end)
 
