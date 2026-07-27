@@ -21,10 +21,14 @@ IF OBJECT_ID('dbo.users', 'U') IS NOT NULL DROP TABLE dbo.users;
 CREATE TABLE dbo.users (
   id int IDENTITY(1,1) PRIMARY KEY,
   name nvarchar(100) NOT NULL,
-  email nvarchar(255) NULL UNIQUE,
+  email nvarchar(255) NULL,
   age int NULL,
   created_at datetime2 NOT NULL DEFAULT SYSUTCDATETIME()
 );
+
+-- Unlike PG/MySQL, a plain UNIQUE constraint here allows only ONE NULL;
+-- the fixture has two NULL emails, so uniqueness must be filtered.
+CREATE UNIQUE INDEX ux_users_email ON dbo.users(email) WHERE email IS NOT NULL;
 
 INSERT INTO dbo.users (name, email, age) VALUES
   (N'Alice',   N'alice@example.com',   30),
@@ -42,9 +46,12 @@ INSERT INTO dbo.users (name, email, age) VALUES
   (N'Mona',    N'mona@example.com',    31),
   (N'Nate',    NULL,                   27),
   (N'Olivia',  N'olivia@example.com',  33);
+GO
 
+-- CREATE VIEW must be the only statement in its batch.
 CREATE VIEW dbo.no_pk_view AS
   SELECT name, email, age FROM dbo.users WHERE age IS NOT NULL;
+GO
 
 CREATE TABLE dbo.composite_pk (
   tenant_id int NOT NULL,
