@@ -2162,8 +2162,9 @@ local function make_keymap_ctx(bufnr)
     return M._sessions[bufnr]
   end
   -- Same reason, plus is_editable() is file-local and unreachable once the
-  -- sections live in their own modules.
-  function ctx.is_editable()
+  -- sections live in their own modules. Named for its subject: it answers for
+  -- ctx.session(), not for whatever session the caller happens to be holding.
+  function ctx.session_is_editable()
     return is_editable(M._sessions[bufnr])
   end
 
@@ -2241,7 +2242,7 @@ local function make_keymap_ctx(bufnr)
   function ctx.edit_cell()
     local session = ctx.session()
     if not session then return end
-    if not ctx.is_editable() then
+    if not ctx.session_is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end

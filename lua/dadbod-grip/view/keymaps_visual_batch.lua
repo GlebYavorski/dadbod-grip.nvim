@@ -36,7 +36,7 @@ function M.setup(bufnr, ctx)
   kvmap("grid_v_edit", function()
     local session = ctx.session()
     if not session then return end
-    if not ctx.is_editable() then
+    if not ctx.session_is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -64,7 +64,7 @@ function M.setup(bufnr, ctx)
   kvmap("grid_v_delete", function()
     local session = ctx.session()
     if not session then return end
-    if not ctx.is_editable() then
+    if not ctx.session_is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -86,7 +86,7 @@ function M.setup(bufnr, ctx)
   kvmap("grid_v_null", function()
     local session = ctx.session()
     if not session then return end
-    if not ctx.is_editable() then
+    if not ctx.session_is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end

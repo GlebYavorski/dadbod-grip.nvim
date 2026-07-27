@@ -89,7 +89,7 @@ function M.setup(bufnr, ctx)
 
   -- ?: help popup
   kmap("help", function()
-    view.show_help({ readonly = not ctx.is_editable() })
+    view.show_help({ readonly = not ctx.session_is_editable() })
   end, "Show help")
 
   -- <C-p>: command palette (discover all actions for this surface)

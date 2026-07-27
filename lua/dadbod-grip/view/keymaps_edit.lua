@@ -53,7 +53,7 @@ function M.setup(bufnr, ctx)
   kmap("grid_delete", function()
     local session = ctx.session()
     if not session then return end
-    if not ctx.is_editable() then
+    if not ctx.session_is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -69,7 +69,7 @@ function M.setup(bufnr, ctx)
   kmap("grid_insert", function()
     local session = ctx.session()
     if not session then return end
-    if not ctx.is_editable() then
+    if not ctx.session_is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -82,7 +82,7 @@ function M.setup(bufnr, ctx)
   kmap("grid_clone", function()
     local session = ctx.session()
     if not session then return end
-    if not ctx.is_editable() then
+    if not ctx.session_is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -132,7 +132,7 @@ function M.setup(bufnr, ctx)
     end
 
     -- Normal mode: apply staged changes
-    if not ctx.is_editable() then
+    if not ctx.session_is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
@@ -325,7 +325,7 @@ function M.setup(bufnr, ctx)
   kmap("grid_null", function()
     local session = ctx.session()
     if not session then return end
-    if not ctx.is_editable() then
+    if not ctx.session_is_editable() then
       vim.notify("Read-only: no primary key detected", vim.log.levels.INFO)
       return
     end
