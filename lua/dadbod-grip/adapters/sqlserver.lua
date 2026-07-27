@@ -43,6 +43,10 @@ local function sqlcmd_args(parsed, sql_str, opts)
     "-S", server,
     "-W",
     "-s", "\t",
+    -- Without -b sqlcmd exits 0 even when the server rejects the statement, so
+    -- every `code ~= 0` guard below would be dead and a refused DROP would be
+    -- reported as a success.
+    "-b",
     "-Q", query,
   }
 
@@ -66,6 +70,16 @@ end
 --- Build and run the sqlcmd command, blocking.
 local function sqlcmd(parsed, sql_str, timeout_ms, opts)
   return adapters.run_cmd(sqlcmd_args(parsed, sql_str, opts), timeout_ms or DEFAULT_TIMEOUT)
+end
+
+--- Message for a non-zero sqlcmd exit. With -b the server's "Msg 208, ..." text
+--- lands on stdout and stderr stays empty (stderr only carries client-side
+--- failures), so stdout is the fallback before the bare exit code.
+local function sqlcmd_error(stdout, stderr, code)
+  if stderr and stderr ~= "" then return stderr end
+  local out = vim.trim(stdout or "")
+  if out ~= "" then return out end
+  return "sqlcmd exited with code " .. tostring(code)
 end
 
 local function parse_sqlcmd_table(raw)
@@ -116,7 +130,7 @@ local function run_query(sql_str, url, timeout_ms)
 
   local stdout, stderr, code = sqlcmd(parsed, sql_str, timeout_ms)
   if code ~= 0 then
-    return nil, stderr ~= "" and stderr or ("sqlcmd exited with code " .. code)
+    return nil, sqlcmd_error(stdout, stderr, code)
   end
   return parse_sqlcmd_table(stdout), nil
 end
@@ -135,7 +149,7 @@ local function run_query_async(sql_str, url, timeout_ms, callback)
   adapters.run_cmd_async(sqlcmd_args(parsed, sql_str), timeout_ms or DEFAULT_TIMEOUT,
     function(stdout, stderr, code)
       if code ~= 0 then
-        callback(nil, stderr ~= "" and stderr or ("sqlcmd exited with code " .. code))
+        callback(nil, sqlcmd_error(stdout, stderr, code))
         return
       end
       callback(parse_sqlcmd_table(stdout), nil)
@@ -160,7 +174,7 @@ function M.execute(sql_str, url)
   if not parsed then return nil, "Invalid SQL Server URL: " .. url end
   local stdout, stderr, code = sqlcmd(parsed, sql_str, nil, { nocount = false })
   if code ~= 0 then
-    return nil, stderr ~= "" and stderr or ("sqlcmd exited with code " .. code)
+    return nil, sqlcmd_error(stdout, stderr, code)
   end
   local n = stdout:match("%((%d+) rows? affected%)") or stderr:match("%((%d+) rows? affected%)") or "0"
   return { affected = tonumber(n) or 0, message = stdout:gsub("%s+$", "") }, nil
