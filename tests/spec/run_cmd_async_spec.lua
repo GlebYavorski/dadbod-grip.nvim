@@ -1,10 +1,16 @@
 -- run_cmd_async_spec.lua: direct unit tests for adapters.run_cmd_async.
 --
--- Every adapter's get_schema_batch_async goes through this one function, but
--- nothing exercised it directly until now -- only indirectly, one adapter at
--- a time, via adapter_spec.lua's argv-parity tests. These tests target the
--- function itself: real content delivery (a real subprocess, not a mock), a
--- real ENOENT spawn, and the watchdog's exactly-once guarantee.
+-- Every adapter's get_schema_batch_async goes through this one function.
+-- Before task 22 nothing exercised it directly -- only indirectly, one
+-- adapter at a time, via adapter_spec.lua's argv-parity tests -- except a
+-- mocked watchdog/spawn-failure section that had grown inside
+-- sqlserver_schema_spec.lua (added alongside task 21's SQL Server work,
+-- under an unrelated filename). That section was folded in here, in full,
+-- so this file is the one place for the whole contract: real content
+-- delivery (a real subprocess, not a mock), a real ENOENT spawn, delivery
+-- timing under a mocked inline callback, and the watchdog's exactly-once
+-- guarantee from both directions (watchdog-after-on_exit and
+-- on_exit-after-watchdog).
 
 local adapters = require("dadbod-grip.adapters")
 
@@ -49,6 +55,30 @@ test("run_cmd_async: real spawn delivers stdout/stderr/code, asynchronously", fu
   eq(got.code, 3, "exit code delivered")
 end)
 
+-- vim.system's own real callback is already asynchronous, so the happy-path
+-- test above can't tell "run_cmd_async defers via vim.schedule" apart from
+-- "vim.system just happens to always call back later anyway". Mock vim.system
+-- to invoke its callback inline (before it even returns) to isolate the claim:
+-- run_cmd_async's own vim.schedule wrap is what keeps the contract, not
+-- whatever vim.system happens to do.
+test("run_cmd_async: delivery is asynchronous even when on_exit fires inline", function()
+  local calls = 0
+  local orig = vim.system
+  vim.system = function(_args, _opts, cb)
+    cb({ stdout = "out", stderr = "", code = 0 })
+    return { wait = function() end }
+  end
+  local ok, err = pcall(function()
+    adapters.run_cmd_async({ "true" }, 1000, function() calls = calls + 1 end)
+    -- vim.schedule defers to the main loop, so nothing may have run yet.
+    eq(calls, 0, "callback must not run inside run_cmd_async")
+    vim.wait(2000, function() return calls > 0 end, 1)
+    eq(calls, 1, "callback must run exactly once")
+  end)
+  vim.system = orig
+  if not ok then error(err) end
+end)
+
 -- ── ENOENT: a genuinely missing executable, not a mocked throw ─────────────
 -- vim.system() raises synchronously when the executable can't be found;
 -- run_cmd_async promises to pcall that away and report it like a failed run
@@ -70,6 +100,28 @@ test("run_cmd_async: a real nonexistent executable does not throw", function()
   assert(done, "callback never fired")
   eq(got.code, 1, "missing executable reports a failed exit")
   contains(got.stderr, "ENOENT", "stderr carries the spawn error")
+end)
+
+-- A mocked twin of the real-ENOENT test above: vim.system throwing a
+-- synthetic message, asserting the exactly-once delivery with an explicit
+-- counter (the real test only tracks a "done" flag).
+test("run_cmd_async: a spawn failure is reported once, asynchronously", function()
+  local calls, got = 0, nil
+  local orig = vim.system
+  vim.system = function() error("ENOENT: no such file or directory") end
+  local ok, err = pcall(function()
+    adapters.run_cmd_async({ "nope" }, 50, function(_stdout, stderr, code)
+      calls = calls + 1
+      got = { stderr = stderr, code = code }
+    end)
+    eq(calls, 0, "spawn failure must not call back inline")
+    vim.wait(2000, function() return calls > 0 end, 1)
+    eq(calls, 1, "exactly one delivery")
+    eq(got.code, 1, "reported as a failed exit")
+    contains(got.stderr, "ENOENT", "carries the spawn error")
+  end)
+  vim.system = orig
+  if not ok then error(err) end
 end)
 
 -- ── the watchdog: on_exit never arrives at all ──────────────────────────────
@@ -121,6 +173,34 @@ test("run_cmd_async: on_exit firing normally suppresses the watchdog", function(
     -- Wait past the watchdog's deadline: a still-armed timer would fire again.
     vim.wait(300, function() return calls > 1 end, 1)
     eq(calls, 1, "the watchdog must not also deliver")
+  end)
+  adapters._exit_grace_ms = grace
+  vim.system = orig
+  if not ok then error(err) end
+end)
+
+-- The reverse order from the test above: here the watchdog fires *first*
+-- (short grace, on_exit never called by the mock), and a captured on_exit
+-- callback is then invoked by hand -- proving the deliver-once guard also
+-- blocks a late spawn callback that arrives after the watchdog already
+-- answered, not just a late watchdog after a normal on_exit.
+test("run_cmd_async: a late on_exit after the watchdog does not deliver twice", function()
+  local captured_on_exit
+  local calls = 0
+  local orig = vim.system
+  local grace = adapters._exit_grace_ms
+  vim.system = function(_args, _opts, cb)
+    captured_on_exit = cb
+    return { wait = function() end }
+  end
+  local ok, err = pcall(function()
+    adapters._exit_grace_ms = 20
+    adapters.run_cmd_async({ "slow" }, 10, function() calls = calls + 1 end)
+    vim.wait(2000, function() return calls > 0 end, 1)
+    eq(calls, 1, "watchdog delivered once")
+    captured_on_exit({ stdout = "late", stderr = "", code = 0 })
+    vim.wait(100, function() return calls > 1 end, 1)
+    eq(calls, 1, "a late on_exit must be ignored")
   end)
   adapters._exit_grace_ms = grace
   vim.system = orig

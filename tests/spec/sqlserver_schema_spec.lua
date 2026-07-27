@@ -1,11 +1,15 @@
 -- sqlserver_schema_spec.lua: parse-level tests for the sqlserver schema queries
--- (get_schema_batch / get_column_info) and for the adapters.run_cmd_async contract.
+-- (get_schema_batch / get_column_info).
 --
 -- The schema tests mirror the pg/mysql/sqlite get_schema_batch tests in
 -- adapter_spec.lua: feed sqlcmd's tab-separated output through the real parser
 -- and assert on the structure, without a server.
+--
+-- This file used to also carry a generic "adapters.run_cmd_async contract"
+-- section (added alongside the SQL Server watchdog work); it moved to
+-- tests/spec/run_cmd_async_spec.lua in full, so run_cmd_async has one home
+-- instead of two.
 local sqlserver = require("dadbod-grip.adapters.sqlserver")
-local adapters = require("dadbod-grip.adapters")
 
 local pass = 0
 local fail = 0
@@ -413,120 +417,6 @@ test("sqlserver get_referencing_foreign_keys: query failure returns {} and err",
   eq(#refs, 0, "no entries on failure")
   assert(err, "err must be set")
   contains(err, "Msg 262", "err carries the server message")
-end)
-
--- ── adapters.run_cmd_async contract ─────────────────────────────────────────
-
-test("run_cmd_async: delivery is asynchronous even when on_exit fires inline", function()
-  local calls = 0
-  local orig = vim.system
-  vim.system = function(_args, _opts, cb)
-    cb({ stdout = "out", stderr = "", code = 0 })
-    return { wait = function() end }
-  end
-  local ok, err = pcall(function()
-    adapters.run_cmd_async({ "true" }, 1000, function() calls = calls + 1 end)
-    -- vim.schedule defers to the main loop, so nothing may have run yet.
-    eq(calls, 0, "callback must not run inside run_cmd_async")
-    vim.wait(2000, function() return calls > 0 end, 1)
-    eq(calls, 1, "callback must run exactly once")
-  end)
-  vim.system = orig
-  if not ok then error(err) end
-end)
-
-test("run_cmd_async: a process that never exits still gets a timeout answer", function()
-  local got
-  local orig = vim.system
-  local grace = adapters._exit_grace_ms
-  vim.system = function(_args, _opts, _cb)
-    -- Never invokes on_exit: the watchdog is the only way out.
-    return { wait = function() end }
-  end
-  local ok, err = pcall(function()
-    adapters._exit_grace_ms = 20
-    local calls = 0
-    adapters.run_cmd_async({ "hang" }, 10, function(stdout, stderr, code)
-      calls = calls + 1
-      got = { stdout = stdout, stderr = stderr, code = code }
-    end)
-    vim.wait(2000, function() return got ~= nil end, 1)
-    assert(got, "watchdog must deliver a callback")
-    eq(got.code, 1, "timeout reports a failed exit")
-    eq(got.stderr, "command timed out", "same message as the blocking path")
-    eq(got.stdout, "", "no output")
-    eq(calls, 1, "exactly one delivery")
-  end)
-  adapters._exit_grace_ms = grace
-  vim.system = orig
-  if not ok then error(err) end
-end)
-
-test("run_cmd_async: a late on_exit after the watchdog does not deliver twice", function()
-  local captured_on_exit
-  local calls = 0
-  local orig = vim.system
-  local grace = adapters._exit_grace_ms
-  vim.system = function(_args, _opts, cb)
-    captured_on_exit = cb
-    return { wait = function() end }
-  end
-  local ok, err = pcall(function()
-    adapters._exit_grace_ms = 20
-    adapters.run_cmd_async({ "slow" }, 10, function() calls = calls + 1 end)
-    vim.wait(2000, function() return calls > 0 end, 1)
-    eq(calls, 1, "watchdog delivered once")
-    captured_on_exit({ stdout = "late", stderr = "", code = 0 })
-    vim.wait(100, function() return calls > 1 end, 1)
-    eq(calls, 1, "a late on_exit must be ignored")
-  end)
-  adapters._exit_grace_ms = grace
-  vim.system = orig
-  if not ok then error(err) end
-end)
-
--- Two mechanisms keep this true (stopping the timer and the deliver-once flag),
--- so it only goes red when both are gone -- which is the point: the callback
--- must not fire a second time however the implementation is rearranged.
-test("run_cmd_async: the watchdog is cancelled on normal delivery", function()
-  local calls = 0
-  local orig = vim.system
-  local grace = adapters._exit_grace_ms
-  vim.system = function(_args, _opts, cb)
-    vim.schedule(function() cb({ stdout = "ok", stderr = "", code = 0 }) end)
-    return { wait = function() end }
-  end
-  local ok, err = pcall(function()
-    adapters._exit_grace_ms = 20
-    adapters.run_cmd_async({ "true" }, 10, function() calls = calls + 1 end)
-    vim.wait(2000, function() return calls > 0 end, 1)
-    eq(calls, 1, "delivered once")
-    -- Well past the watchdog deadline: a live timer would deliver again.
-    vim.wait(300, function() return calls > 1 end, 1)
-    eq(calls, 1, "watchdog must not fire after a normal delivery")
-  end)
-  adapters._exit_grace_ms = grace
-  vim.system = orig
-  if not ok then error(err) end
-end)
-
-test("run_cmd_async: a spawn failure is reported once, asynchronously", function()
-  local calls, got = 0, nil
-  local orig = vim.system
-  vim.system = function() error("ENOENT: no such file or directory") end
-  local ok, err = pcall(function()
-    adapters.run_cmd_async({ "nope" }, 50, function(_stdout, stderr, code)
-      calls = calls + 1
-      got = { stderr = stderr, code = code }
-    end)
-    eq(calls, 0, "spawn failure must not call back inline")
-    vim.wait(2000, function() return calls > 0 end, 1)
-    eq(calls, 1, "exactly one delivery")
-    eq(got.code, 1, "reported as a failed exit")
-    contains(got.stderr, "ENOENT", "carries the spawn error")
-  end)
-  vim.system = orig
-  if not ok then error(err) end
 end)
 
 -- ── summary ─────────────────────────────────────────────────────────────────
