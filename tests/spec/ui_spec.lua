@@ -303,6 +303,24 @@ test("dismiss_float: the returned close() closes the window directly", function(
   end)
 end)
 
+test("dismiss_float: characterization -- close() does not delete the float's buffer", function()
+  -- Not a requirement, just what happens today: close() only closes the
+  -- window (nvim_win_close); it never calls nvim_buf_delete, and neither
+  -- real call site (view.lua's popup, properties.lua) does either. Because
+  -- info_float's scratch buffer is unlisted with bufhidden=hide, it survives
+  -- as an invisible-to-:ls, hidden buffer for the rest of the session -- a
+  -- real, if minor, leak (see task-14-report.md, Concerns). This test pins
+  -- that fact on purpose: if `close()` is ever changed to delete the buffer,
+  -- this assertion must be updated deliberately, not broken by accident.
+  with_dismissable_float(function(win, buf, close)
+    close()
+    eq(vim.api.nvim_win_is_valid(win), false, "float window closed")
+    eq(vim.api.nvim_buf_is_valid(buf), true, "buffer NOT deleted -- current behavior")
+    eq(vim.bo[buf].buflisted, false, "...but unlisted, invisible to :ls")
+    eq(vim.bo[buf].bufhidden, "hide", "...and bufhidden=hide, so it just sits hidden")
+  end)
+end)
+
 test("dismiss_float: leaving the window (WinLeave) closes it without pressing q", function()
   with_dismissable_float(function(win, _, _, _, caller_win)
     vim.api.nvim_set_current_win(win)
