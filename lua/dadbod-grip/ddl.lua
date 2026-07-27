@@ -22,6 +22,20 @@ local SCHEMA_EXACT_REF_KINDS = {
   postgresql = true, mysql = true, duckdb = true, sqlite = true, sqlserver = true,
 }
 
+-- Deliberately not sql.split_table_name: verified divergent for inputs this
+-- module can plausibly see. split_table_name splits on the *first* dot and
+-- unquotes each half, so a 3-part name ("a.b.c", the shape a DuckDB catalog
+-- attachment name could take before it collapses to 2 parts elsewhere)
+-- returns "b.c" from it, not "c" as bare() does; a quoted identifier
+-- ('schema."quoted table"') comes back unquoted from split_table_name but
+-- untouched from bare(); and the degenerate inputs "", "." and "schema."
+-- disagree outright (nil / "" / "schema" here vs "" / "" / "schema" there).
+-- None of that is reachable through the adapters today (every
+-- get_referencing_foreign_keys() and table_name passed to drop_table is a
+-- plain, unquoted, at-most-one-dot string), so the two happen to agree on
+-- every real input -- but they are not the same function, and swapping would
+-- trade a correct narrow helper for a general-purpose one whose extra
+-- behavior (unquoting, first-dot split) is untested here.
 local function bare(name)
   return (name or ""):match("([^.]+)$")
 end
