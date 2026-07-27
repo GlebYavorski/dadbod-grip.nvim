@@ -161,10 +161,10 @@ vim.api.nvim_create_autocmd("ColorScheme", {
 local _ag = vim.api.nvim_create_augroup("DadbodGripView", { clear = true })
 
 -- ── column width calculation ──────────────────────────────────────────────
--- truncate_display/pad_display moved to ui.lua (Task 11) so properties.lua,
--- profile.lua, diff.lua and er_diagram.lua can share the same display-width
--- truncation/padding instead of each rolling byte-length arithmetic. See the
--- ASCII fast-path rationale there.
+-- truncate_display/pad_display live in ui.lua so properties.lua, profile.lua,
+-- diff.lua and er_diagram.lua share one display-width truncation/padding
+-- instead of each rolling byte-length arithmetic. The ASCII fast path and the
+-- note on 'ambiwidth' moved there with the code they explain.
 local truncate_display = ui.truncate_display
 local pad_display = ui.pad_display
 
