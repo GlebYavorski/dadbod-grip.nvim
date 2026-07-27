@@ -11,12 +11,16 @@ function M.setup(bufnr, ctx)
   local resolve_row_bp = ctx.resolve_row_bp
   local augroup = ctx.augroup
   local col_hl_ns = ctx.col_hl_ns
+  -- Lifted out of the callback below: the autocmd lives as long as the buffer
+  -- does, and capturing ctx would keep the whole helper set alive with it when
+  -- the accessor is the only part of it this module ever reaches for.
+  local get_session = ctx.session
 
   vim.api.nvim_create_autocmd("CursorMoved", {
     group  = augroup,
     buffer = bufnr,
     callback = function()
-      local session = ctx.session()
+      local session = get_session()
       if not session or not session._render then return end
       local r = session._render
       local vis_cols = r.visible_columns or (session.state and session.state.columns) or {}
