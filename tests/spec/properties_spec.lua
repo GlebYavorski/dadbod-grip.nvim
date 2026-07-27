@@ -3,6 +3,8 @@
 -- length (#s), since column names, types and defaults come straight from the
 -- database and may be non-ASCII.
 local properties = require("dadbod-grip.properties")
+local db = require("dadbod-grip.db")
+local ui = require("dadbod-grip.ui")
 
 local pass, fail = 0, 0
 
@@ -134,6 +136,100 @@ test("build_lines: index name dot-fill alignment uses display width", function()
     first_col = first_col or col
     eq(col, first_col, "index type ('btree') aligned at the same display column: " .. l)
   end
+end)
+
+-- ── M.open: R/+/T deterministic buffer cleanup (task 22 item 5) ─────────────
+-- Before this fix, R/+/T called a bare nvim_win_close and left the buffer to
+-- WinLeave's deferred (vim.schedule) reclaim, which the blocking ddl.lua
+-- prompt opened right after can starve until the prompt returns (worst case:
+-- the buffer leaks for as long as the prompt is up). They now call the same
+-- close() dismiss_float already hands back, which deletes the buffer
+-- synchronously -- so it must already be gone by the time the keymap
+-- callback returns, well before any prompt gets a chance to block anything.
+
+local function mock_open_db()
+  local orig = {
+    get_column_info  = db.get_column_info,
+    get_primary_keys = db.get_primary_keys,
+    get_foreign_keys = db.get_foreign_keys,
+    get_indexes      = db.get_indexes,
+    get_table_stats  = db.get_table_stats,
+  }
+  db.get_column_info  = function() return { { column_name = "id", data_type = "integer", is_nullable = "NO", column_default = "" } } end
+  db.get_primary_keys = function() return {} end
+  db.get_foreign_keys = function() return {} end
+  db.get_indexes      = function() return {} end
+  db.get_table_stats  = function() return { row_estimate = 0, size_bytes = 0 } end
+  return function()
+    for k, v in pairs(orig) do db[k] = v end
+  end
+end
+
+local function press_key(bufnr, lhs)
+  for _, m in ipairs(vim.api.nvim_buf_get_keymap(bufnr, "n")) do
+    if m.lhs == lhs and m.callback then
+      m.callback()
+      return true
+    end
+  end
+  return false
+end
+
+--- Open the properties float and put the cursor on the "id" column row --
+--- the R keymap's cursor_column() needs that to resolve to a real column.
+--- db/ui are mocked by the caller; this only opens the float.
+local function open_props_for_keymap_test()
+  local test_props = {
+    table_name = "t",
+    columns = { { column_name = "id", data_type = "integer", is_nullable = "NO", column_default = "" } },
+    primary_keys = {}, foreign_keys = {}, indexes = {}, row_estimate = 0, size_bytes = 0,
+  }
+  local _, _, col_line_map = properties._build_lines(test_props)
+  local id_row
+  for row, col_name in pairs(col_line_map) do
+    if col_name == "id" then id_row = row end
+  end
+  assert(id_row, "test setup: 'id' column row not found in build_lines output")
+
+  local win, buf = properties.open("t", "test://url")
+  vim.api.nvim_win_set_cursor(win, { id_row, 0 })
+  return win, buf
+end
+
+--- Run one R/+/T keymap test end to end: mock db + a cancelling ui.input
+--- (so the ddl prompt returns immediately without touching the database),
+--- open the float, press the key, and hand (win, buf) back for assertions.
+local function run_keymap_test(lhs)
+  local restore_db = mock_open_db()
+  local orig_input = ui.input
+  ui.input = function() return nil end  -- simulate <Esc> on the ddl prompt
+
+  local win, buf = open_props_for_keymap_test()
+  local pressed = press_key(buf, lhs)
+
+  ui.input = orig_input
+  restore_db()
+
+  assert(pressed, lhs .. " keymap must be registered")
+  return win, buf
+end
+
+test("R keymap: buffer is deleted deterministically, not left to WinLeave", function()
+  local win, buf = run_keymap_test("R")
+  eq(vim.api.nvim_win_is_valid(win), false, "float window closed")
+  eq(vim.api.nvim_buf_is_valid(buf), false, "float buffer deleted synchronously")
+end)
+
+test("+ keymap: buffer is deleted deterministically, not left to WinLeave", function()
+  local win, buf = run_keymap_test("+")
+  eq(vim.api.nvim_win_is_valid(win), false, "float window closed")
+  eq(vim.api.nvim_buf_is_valid(buf), false, "float buffer deleted synchronously")
+end)
+
+test("T keymap: buffer is deleted deterministically, not left to WinLeave", function()
+  local win, buf = run_keymap_test("T")
+  eq(vim.api.nvim_win_is_valid(win), false, "float window closed")
+  eq(vim.api.nvim_buf_is_valid(buf), false, "float buffer deleted synchronously")
 end)
 
 -- ── summary ──────────────────────────────────────────────────────────────────

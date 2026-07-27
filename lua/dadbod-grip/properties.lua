@@ -275,7 +275,13 @@ function M.open(table_name, url, grip_win)
       vim.notify("Move cursor to a column row", vim.log.levels.INFO)
       return
     end
-    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+    -- close() (not a bare nvim_win_close) so the buffer is gone before the
+    -- blocking ddl prompt below opens: WinLeave's own deferred cleanup runs
+    -- via vim.schedule, which a blocking prompt can starve until it returns,
+    -- leaking the buffer for as long as the prompt is up. Deleting the
+    -- current buffer from inside its own keymap is already exercised by
+    -- dismiss_float's q/<Esc> mapping, so it is not new territory here.
+    close()
     local ddl = require("dadbod-grip.ddl")
     ddl.rename_column(table_name, col_name, url, function()
       -- Refresh properties and any open grip buffers
@@ -286,7 +292,8 @@ function M.open(table_name, url, grip_win)
 
   -- +: add column
   vim.keymap.set("n", "+", function()
-    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+    -- See the R handler above for why close() replaces a bare nvim_win_close.
+    close()
     local ddl = require("dadbod-grip.ddl")
     ddl.add_column(table_name, url, function()
       reopen()
@@ -296,7 +303,8 @@ function M.open(table_name, url, grip_win)
 
   -- T: rename table
   vim.keymap.set("n", "T", function()
-    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+    -- See the R handler above for why close() replaces a bare nvim_win_close.
+    close()
     if vim.api.nvim_win_is_valid(caller_win) then
       vim.api.nvim_set_current_win(caller_win)
     end
