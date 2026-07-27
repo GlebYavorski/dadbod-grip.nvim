@@ -519,17 +519,32 @@ function M.execute(sql_str, url)
   -- MySQL doesn't support DEFAULT VALUES; rewrite for compatibility
   sql_str = sql_str:gsub("DEFAULT VALUES", "() VALUES ()")
 
-  local stdout, stderr, code = mysql_query(parsed, sql_str)
+  -- mysql --batch prints no "N rows affected" line anywhere (that needs -vv), so
+  -- ask the server for the count instead, the way sqlite appends changes().
+  -- ROW_COUNT() reports on the statement right before it, so it must come last;
+  -- for a multi-statement batch that means the count is the last statement's.
+  -- The newline before ";" keeps a trailing line comment from swallowing it.
+  local wrapped = (sql_str:gsub("[%s;]+$", "")) .. "\n; SELECT ROW_COUNT();"
+
+  local stdout, stderr, code = mysql_query(parsed, wrapped)
   if code ~= 0 then
     local msg = stderr ~= "" and stderr or ("mysql exited with code " .. code)
     return nil, msg
   end
 
-  -- mysql outputs affected-row info to stderr in batch mode
-  local n = stderr:match("(%d+) rows? affected") or
-            stdout:match("(%d+) rows? affected") or
-            "0"
-  return { affected = tonumber(n) or 0, message = n .. " row(s) affected" }, nil
+  -- The appended SELECT prints "ROW_COUNT()\nN". Scan from the end so a result
+  -- set produced by an earlier statement can't be mistaken for the count.
+  -- ROW_COUNT() is -1 when the last statement was no DML; report that as 0.
+  local n = 0
+  local lines = vim.split(stdout, "\n", { plain = true })
+  for i = #lines - 1, 1, -1 do
+    if lines[i] == "ROW_COUNT()" then
+      n = math.max(tonumber(lines[i + 1]) or 0, 0)
+      break
+    end
+  end
+
+  return { affected = n, message = n .. " row(s) affected" }, nil
 end
 
 --- Ping the server by running SELECT 1. Returns true on success, false on any error.

@@ -525,21 +525,57 @@ test("mysql execute: non-DEFAULT-VALUES SQL unchanged", function()
   end)
 end)
 
-test("mysql execute: affected row parsing from stderr", function()
+test("mysql execute: appends SELECT ROW_COUNT() after stripping trailing semicolons", function()
   with_executable(function()
-    with_system_mock("", "3 rows affected", 0, function()
+    local captured_args
+    local orig = vim.system
+    vim.system = function(a, _o, cb)
+      captured_args = a
+      local r = { stdout = "ROW_COUNT()\n1\n", stderr = "", code = 0 }
+      if cb then cb(r) else return { wait = function() return r end } end
+    end
+    mysql.execute("UPDATE t SET x=1;\n", "mysql://root@localhost/test")
+    vim.system = orig
+    eq(captured_args[#captured_args], "UPDATE t SET x=1\n; SELECT ROW_COUNT();",
+      "one statement separator, comment-safe newline")
+  end)
+end)
+
+test("mysql execute: affected row parsing from ROW_COUNT() output", function()
+  with_executable(function()
+    with_system_mock("ROW_COUNT()\n3\n", "", 0, function()
       local result, err = mysql.execute("UPDATE t SET x=1", "mysql://root@localhost/test")
       assert(not err, "should not error: " .. tostring(err))
       eq(result.affected, 3, "affected")
+      eq(result.message, "3 row(s) affected", "message")
     end)
   end)
 end)
 
 test("mysql execute: 0 rows affected", function()
   with_executable(function()
-    with_system_mock("", "0 rows affected", 0, function()
+    with_system_mock("ROW_COUNT()\n0\n", "", 0, function()
       local result = mysql.execute("UPDATE t SET x=1 WHERE 1=0", "mysql://root@localhost/test")
       eq(result.affected, 0, "affected")
+    end)
+  end)
+end)
+
+test("mysql execute: an earlier result set is not mistaken for the count", function()
+  with_executable(function()
+    -- A leading SELECT prints its own rows; only the trailing ROW_COUNT() counts.
+    with_system_mock("id\n7\n8\nROW_COUNT()\n2\n", "", 0, function()
+      local result = mysql.execute("SELECT id FROM t; UPDATE t SET x=1", "mysql://root@localhost/test")
+      eq(result.affected, 2, "affected")
+    end)
+  end)
+end)
+
+test("mysql execute: ROW_COUNT() of -1 (no DML) is reported as 0", function()
+  with_executable(function()
+    with_system_mock("ROW_COUNT()\n-1\n", "", 0, function()
+      local result = mysql.execute("SELECT 1", "mysql://root@localhost/test")
+      eq(result.affected, 0, "negative count clamped")
     end)
   end)
 end)
