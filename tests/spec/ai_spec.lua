@@ -250,6 +250,95 @@ test("build_schema_context: a throwing get_schema_batch degrades to per-table", 
   contains(ddl, "CREATE TABLE users", "users table present via per-table fallback")
 end)
 
+-- ── generate_sql: system prompt pinned byte-for-byte ─────────────────────────
+-- The prompt was only ever checked against throwaway snapshots taken while
+-- refactoring around it, so any edit to its wording -- a doubled space, a
+-- reordered rule, a lost blank line -- could ship silently and quietly change
+-- every generated query. generate_sql is driven all the way down to the curl
+-- argv here and the prompt is read back out of the JSON body that would have
+-- been POSTed: those are the exact bytes the provider receives.
+--
+-- Fixture notes: the provider is pinned to anthropic (its build_request puts
+-- the system prompt in a `system` field of its own, unmixed with the
+-- question), and the URL scheme is deliberately unknown to adapters.display_name
+-- so the "SQL"-compatible fallback is pinned too.
+
+--- Capture the system prompt generate_sql would POST, without spawning curl.
+--- @return string system prompt, string user message
+local function captured_prompt(question, url, existing_sql)
+  local restore = mock_ai_db({ { name = "users" } }, {
+    users = {
+      { column_name = "id",    data_type = "integer", is_nullable = "NO" },
+      { column_name = "email", data_type = "text",    is_nullable = "NO" },
+    },
+  })
+  local orig_system = vim.system
+  local orig_notify = vim.notify
+  local captured
+  -- post_json passes its own completion callback, which is simply never
+  -- invoked: the request is inspected, not answered.
+  vim.system = function(args) captured = args; return { wait = function() return {} end } end
+  vim.notify = function() end
+  ai.setup({ provider = "anthropic", api_key = "test-key", model = "pinned-model" })
+
+  local cb_err
+  local ok, err = pcall(ai.generate_sql, question, url, function(_, e) cb_err = e end, existing_sql)
+
+  ai.setup({})
+  vim.system = orig_system
+  vim.notify = orig_notify
+  restore()
+
+  if not ok then error(err, 0) end
+  assert(cb_err == nil, "generate_sql failed before building a request: " .. tostring(cb_err))
+  assert(captured, "curl was invoked")
+  local payload
+  for i, a in ipairs(captured) do
+    if a == "-d" then payload = captured[i + 1] end
+  end
+  assert(payload, "request body found in the curl argv")
+  local body = vim.fn.json_decode(payload)
+  return body.system, body.messages[1].content
+end
+
+local EXPECTED_PROMPT = [[
+You are a SQL query generator. Output ONLY the raw SQL query. No explanations, no comments, no markdown, no prose, no questions. Do not ask for more information. The complete schema is provided below. Use SQL-compatible SQL.
+
+Rules:
+- ONLY use column names that appear in the schema below. Never invent or guess column names.
+- When asked about a column that doesn't exist, pick the closest match from the schema.
+- 'oldest' or 'earliest' = ORDER BY column ASC. 'newest' or 'latest' = ORDER BY column DESC.
+- Filter out NULLs when using ORDER BY, MIN, MAX, or aggregates on nullable columns.
+- Use IS NOT NULL in WHERE clauses when sorting to find extremes.
+- Use LIMIT for 'top N' or 'oldest/newest' queries.
+- Include column aliases for computed columns.
+
+Complete database schema:
+CREATE TABLE users (id integer NOT NULL, email text NOT NULL);]]
+
+test("generate_sql: system prompt is byte-identical to the pinned snapshot", function()
+  local prompt, user_msg = captured_prompt("oldest user", "test://prompt-snapshot", nil)
+  eq(prompt, EXPECTED_PROMPT, "system prompt")
+  eq(user_msg, "oldest user", "question is sent verbatim, not folded into the prompt")
+end)
+
+test("generate_sql: existing editor query is appended verbatim after the schema", function()
+  local prompt = captured_prompt("only active ones", "test://prompt-snapshot-existing", "SELECT * FROM users")
+  eq(prompt, EXPECTED_PROMPT .. [[
+
+
+The user has this existing query in their editor:
+SELECT * FROM users
+
+If the user's request relates to modifying this query, return the modified version. Otherwise generate a new query.]],
+    "system prompt with the existing-query block")
+end)
+
+test("generate_sql: an empty editor query adds nothing to the prompt", function()
+  local prompt = captured_prompt("oldest user", "test://prompt-snapshot-empty", "")
+  eq(prompt, EXPECTED_PROMPT, "empty existing_sql must not open the existing-query block")
+end)
+
 -- ── _strip_fences ────────────────────────────────────────────────────────────
 
 test("_strip_fences: removes sql code fences", function()
