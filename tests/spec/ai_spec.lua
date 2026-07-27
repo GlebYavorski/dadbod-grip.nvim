@@ -250,6 +250,27 @@ test("build_schema_context: a throwing get_schema_batch degrades to per-table", 
   contains(ddl, "CREATE TABLE users", "users table present via per-table fallback")
 end)
 
+test("build_schema_context: zero tables never spawns get_schema_batch", function()
+  local orig_list  = db.list_tables
+  local orig_batch = db.get_schema_batch
+  local batch_called = false
+
+  db.list_tables = function(_) return {}, nil end
+  db.get_schema_batch = function(_)
+    batch_called = true
+    return nil
+  end
+
+  local ok_call, ddl = pcall(ai.build_schema_context, "test://zero-tables", "")
+
+  db.list_tables      = orig_list
+  db.get_schema_batch  = orig_batch
+
+  assert(ok_call, "build_schema_context must not error: " .. tostring(ddl))
+  assert(not batch_called, "get_schema_batch must not be called when there are no tables")
+  eq(ddl, "", "no tables means no DDL")
+end)
+
 -- ── generate_sql: system prompt pinned byte-for-byte ─────────────────────────
 -- The prompt was only ever checked against throwaway snapshots taken while
 -- refactoring around it, so any edit to its wording -- a doubled space, a
