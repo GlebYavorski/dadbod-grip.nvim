@@ -66,11 +66,9 @@ end
 
 --- Pre-warm the schema cache asynchronously so columns are ready before the first keypress.
 --- Called after connection switch and after GripAttach. No-op if adapter lacks async batch.
---- LIMITATION: today only the DuckDB adapter implements get_schema_batch_async (see
---- adapters/duckdb.lua); postgresql/mysql/sqlite/sqlserver only have the synchronous
---- get_schema_batch. For those, this is a no-op and the first completion request after
---- a cold cache still falls through to M.get_schema's blocking CLI spawn mid-keystroke.
---- Adding async warming for the other adapters is a separate feature, not covered here.
+--- All five adapters (duckdb, postgresql, mysql, sqlite, sqlserver) implement
+--- get_schema_batch_async, each building the same SQL and reusing the same parser as its
+--- synchronous get_schema_batch, so warming can never disagree with a later cold fetch.
 function M.warm_schema(url)
   local db = require("dadbod-grip.db")
   if not db.get_schema_batch_async then return end
