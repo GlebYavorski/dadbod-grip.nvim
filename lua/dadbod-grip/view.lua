@@ -2148,6 +2148,9 @@ local KEYMAP_SECTIONS = {
 
 --- Helpers shared by every keymap section: the four map wrappers, the visual
 --- selection row collector and the cell editor (also reached via <CR>).
+--- ctx.view hands the sections this whole module; what they may reach through
+--- it is spelled out at the assignment below, and M._sessions is not on that
+--- list.
 local function make_keymap_ctx(bufnr)
   local km = require("dadbod-grip.keymaps")
   local ctx = { km = km }
@@ -2167,6 +2170,17 @@ local function make_keymap_ctx(bufnr)
   -- The view module itself. Handed over rather than require()d by the section
   -- modules: view.lua requires them at load time, so a require back would be a
   -- cycle. Injecting the table keeps the sections free of any view import.
+  --
+  -- Passing M whole is a shortcut, not a licence. The contract is this list of
+  -- functions, and nothing else on M is part of it:
+  --   render, switch_view, _snap_col, _clamp_data_line, get_cell,
+  --   _cell_end_byte, apply_edit, close_all_floats, _close_live_sql_float,
+  --   _update_live_sql_float, show_help, do_export, _format_export,
+  --   _json_to_lines, enum_hint_values, _fk_referencing, _column_set
+  -- M._sessions in particular is off limits: reaching into the registry lets a
+  -- section read or mutate another buffer's session behind the accessors that
+  -- exist for exactly that. Use ctx.session() for this buffer, ctx.each_session
+  -- for the others.
   ctx.view = M
 
   -- gL/gJ need every live grid, not just this buffer's. An iterator instead of
