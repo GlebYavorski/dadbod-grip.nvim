@@ -2150,7 +2150,7 @@ local KEYMAP_SECTIONS = {
 --- selection row collector and the cell editor (also reached via <CR>).
 local function make_keymap_ctx(bufnr)
   local km = require("dadbod-grip.keymaps")
-  local ctx = { bufnr = bufnr, km = km }
+  local ctx = { km = km }
 
   -- Session accessor, deliberately a function: re-running a query replaces the
   -- session table wholesale, so a closure that captured the value would keep
