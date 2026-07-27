@@ -232,6 +232,23 @@ test("T keymap: buffer is deleted deterministically, not left to WinLeave", func
   eq(vim.api.nvim_buf_is_valid(buf), false, "float buffer deleted synchronously")
 end)
 
+test("D keymap: buffer is deleted deterministically, not left to WinLeave", function()
+  local win, buf = run_keymap_test("D")
+  eq(vim.api.nvim_win_is_valid(win), false, "float window closed")
+  eq(vim.api.nvim_buf_is_valid(buf), false, "float buffer deleted synchronously")
+
+  -- Unlike R/+/T, D's callback goes straight into ddl.drop_column's
+  -- destructive_confirm, which opens (and enters) its own float right after
+  -- close() runs -- close it here so this test leaves no window behind for
+  -- whatever the runner executes next.
+  local confirm_win = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_is_valid(confirm_win) and vim.api.nvim_win_get_config(confirm_win).relative ~= "" then
+    local confirm_buf = vim.api.nvim_get_current_buf()
+    pcall(vim.api.nvim_win_close, confirm_win, true)
+    pcall(vim.api.nvim_buf_delete, confirm_buf, { force = true })
+  end
+end)
+
 -- ── summary ──────────────────────────────────────────────────────────────────
 
 print(string.format("\nproperties_spec: %d passed, %d failed", pass, fail))

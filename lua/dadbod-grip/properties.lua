@@ -321,7 +321,8 @@ function M.open(table_name, url, grip_win)
       vim.notify("Move cursor to a column row", vim.log.levels.INFO)
       return
     end
-    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+    -- See the R handler above for why close() replaces a bare nvim_win_close.
+    close()
     local ddl = require("dadbod-grip.ddl")
     ddl.drop_column(table_name, col_name, url, function()
       reopen()
