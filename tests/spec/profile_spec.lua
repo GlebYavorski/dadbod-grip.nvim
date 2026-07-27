@@ -107,6 +107,24 @@ test("classify_column: unknown types", function()
   eq(profile.classify_column(nil), "unknown")
 end)
 
+test("classify_column: enum/set values must not leak into the classification", function()
+  -- MySQL's COLUMN_TYPE spells the value list out, so the payload is user data:
+  -- "printed" contains "int", "daytime" contains "time". Classifying on it would
+  -- send AVG(CAST(col AS REAL)) at an enum column and bucket it as a number.
+  eq(profile.classify_column("enum('printed','draft')"), "text", "int hidden in a value")
+  eq(profile.classify_column("set('read','write','print')"), "text", "int hidden in a set value")
+  eq(profile.classify_column("enum('daytime','night')"), "text", "time hidden in a value")
+  eq(profile.classify_column("enum('happy','sad','neutral')"), "text", "plain enum")
+end)
+
+test("classify_column: lengths and precisions do not change the category", function()
+  eq(profile.classify_column("nvarchar(max)"), "text", "sqlserver max length")
+  eq(profile.classify_column("decimal(10,2)"), "numeric", "precision and scale")
+  eq(profile.classify_column("tinyint(1)"), "numeric", "mysql boolean convention stays numeric")
+  eq(profile.classify_column("bigint unsigned"), "numeric", "unsigned modifier")
+  eq(profile.classify_column("timestamp(3) without time zone"), "date", "fractional seconds")
+end)
+
 -- ── build_lines ───────────────────────────────────────────────────────────────
 
 local function mock_profile_data()

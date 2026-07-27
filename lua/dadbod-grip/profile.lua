@@ -29,9 +29,15 @@ function M.sparkline(counts, max_count)
 end
 
 --- Classify a column's data type into a profiling category.
+--- Matches on the bare type name: everything inside parentheses is dropped
+--- first, because it can carry user data that collides with the keywords below.
+--- MySQL's COLUMN_TYPE spells enums out in full, so enum('printed','draft')
+--- would match "int" inside "printed" and enum('daytime','night') would match
+--- "time" inside "daytime". Dropping the parens also normalises the lengths and
+--- precisions every adapter emits: nvarchar(max), decimal(10,2), varchar(100).
 function M.classify_column(data_type)
   if not data_type then return "unknown" end
-  local dt = data_type:lower()
+  local dt = (data_type:lower():gsub("%b()", ""))
   if dt:match("bool") then return "boolean" end
   -- Date/time must come before numeric (timestamp contains "int")
   if dt:match("date") or dt:match("time") or dt:match("interval") then return "date" end
