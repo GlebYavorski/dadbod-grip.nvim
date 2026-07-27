@@ -323,7 +323,18 @@ local function drop_table_dialog(table_name, url, refs)
   local win   = vim.api.nvim_get_current_win()
   local buf   = vim.api.nvim_get_current_buf()
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+
+  -- Only ever close what destructive_confirm opened. Should drop_table one day
+  -- return before opening the float, the current window is the spec runner's
+  -- own -- so the float is identified (a floating window whose first line is
+  -- the dialog's banner) before anything is torn down.
+  assert(vim.api.nvim_win_get_config(win).relative ~= "",
+    "drop_table opened a floating window")
+  assert(lines[1] and lines[1]:find("WARNING: DROP TABLE", 1, true),
+    "the float is the DROP TABLE confirmation, not some other buffer (line 1: "
+      .. tostring(lines[1]) .. ")")
+
+  vim.api.nvim_win_close(win, true)
   pcall(vim.api.nvim_buf_delete, buf, { force = true })
   return table.concat(lines, "\n")
 end

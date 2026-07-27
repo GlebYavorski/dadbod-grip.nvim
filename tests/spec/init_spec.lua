@@ -333,11 +333,18 @@ local function open_welcome_and_wait()
 end
 
 -- Every highlight group the welcome screen uses, with a predicate for what a
--- mark of that group is allowed to cover. Together with "every rendered line
--- carries at least one mark" below, this replaces the totals this test used to
--- pin (62 marks, 42 of them Identifier) -- numbers that had to be recounted by
--- hand after any edit to the logo or the keymap rows, and that said nothing
--- about *where* the highlights landed.
+-- mark of that group is allowed to cover. This plus the three cases below
+-- replaces the totals this test used to pin (62 marks, 42 of them Identifier) --
+-- numbers that had to be recounted by hand after any edit to the logo or the
+-- keymap rows, and that said nothing about *where* the highlights landed.
+--
+-- GripNullStaged is deliberately absent even though init.lua can apply it (to a
+-- "·NULL·" token on any line): the current screen has no such token, so a
+-- predicate for it would never run. Leaving the dictionary closed means that if
+-- "·NULL·" is ever added to the logo, the first case below fails with
+-- "unexpected highlight group ... GripNullStaged" -- pointing at this table so
+-- whoever adds it has to say what that mark must cover, instead of the mark
+-- going unchecked.
 local WELCOME_GROUPS = {
   -- Section headers, bottom separator and tagline: the whole line.
   Comment      = function(text, line) return text == line end,
@@ -352,6 +359,19 @@ local WELCOME_GROUPS = {
   GripInserted = function(text) return text == "green = inserted" end,
   GripDeleted  = function(text) return text == "red = deleted" end,
 }
+
+--- Index the Identifier marks for lookup by position.
+--- @return table  row -> { [start_col] = end_col }
+local function identifier_marks(marks)
+  local idents = {}
+  for _, m in ipairs(marks) do
+    if m[4].hl_group == "Identifier" then
+      idents[m[2]] = idents[m[2]] or {}
+      idents[m[2]][m[3]] = m[4].end_col
+    end
+  end
+  return idents
+end
 
 test("open_welcome: every rendered line is highlighted, and every mark fits its group", function()
   local buf, marks = open_welcome_and_wait()
@@ -378,7 +398,9 @@ test("open_welcome: every rendered line is highlighted, and every mark fits its 
   end
 
   -- Blank lines are the only unhighlighted ones: a branch that stops firing
-  -- leaves its lines bare, which is what the old total was really guarding.
+  -- leaves its lines bare. This only catches the *first* mark on a line, so the
+  -- two positions that carry a second one (the right-hand keymap key and the
+  -- --flag in a :Grip example) get a case of their own below.
   for i, line in ipairs(lines) do
     if line ~= "" then
       assert((per_line[i - 1] or 0) > 0, "line " .. i .. " is rendered but unhighlighted: " .. line)
@@ -395,14 +417,7 @@ test("open_welcome: keymap rows highlight both keys of the two-column layout", f
   -- around: adding or reflowing a keymap row needs no edit here.
   local buf, marks = open_welcome_and_wait()
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-
-  local idents = {}  -- row -> { [start_col] = end_col } for Identifier marks
-  for _, m in ipairs(marks) do
-    if m[4].hl_group == "Identifier" then
-      idents[m[2]] = idents[m[2]] or {}
-      idents[m[2]][m[3]] = m[4].end_col
-    end
-  end
+  local idents = identifier_marks(marks)
 
   local rows_checked = 0
   for row, starts in pairs(idents) do
@@ -419,6 +434,36 @@ test("open_welcome: keymap rows highlight both keys of the two-column layout", f
     end
   end
   assert(rows_checked > 0, "the welcome screen still has keymap rows to check")
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+end)
+
+test("open_welcome: --flag tokens in the :Grip examples are highlighted", function()
+  -- The flag mark is a *second* mark on a line that already carries a Statement
+  -- (see the :Grip branch in init.lua), so neither "every line carries a mark"
+  -- nor the keymap case above -- which recognises rows by an Identifier at byte
+  -- 2, and :Grip rows have none -- notices when it stops being applied.
+  --
+  -- Scanned straight off the rendered text, so it follows the logo around.
+  -- init.lua marks the first --flag per :Grip example; every such token on the
+  -- current screen is the first on its line, and a second unmarked flag on one
+  -- line should surface here rather than pass silently.
+  local buf, marks = open_welcome_and_wait()
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local idents = identifier_marks(marks)
+
+  local flags_checked = 0
+  for i, line in ipairs(lines) do
+    local from = 1
+    while true do
+      local s, e = line:find("%-%-%S+", from)
+      if not s then break end
+      assert((idents[i - 1] or {})[s - 1] == e, "--flag '" .. line:sub(s, e)
+        .. "' on line " .. i .. " is not highlighted as its own token")
+      flags_checked = flags_checked + 1
+      from = e + 1
+    end
+  end
+  assert(flags_checked > 0, "the welcome screen still shows a --flag example to check")
   pcall(vim.api.nvim_buf_delete, buf, { force = true })
 end)
 
