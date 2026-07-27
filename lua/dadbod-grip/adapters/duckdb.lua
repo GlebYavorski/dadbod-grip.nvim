@@ -968,7 +968,10 @@ end
 --- Used for pre-warming the completion cache on connection switch / GripAttach.
 function M.get_schema_batch_async(url, callback)
   local db_path = extract_path(url)
-  if not db_path then callback(nil); return end
+  -- Deliver via vim.schedule even on this guard path: duckdb_async's own
+  -- callback always arrives via vim.schedule, and a caller must not be able
+  -- to tell a bad URL from a spawn failure by timing alone.
+  if not db_path then vim.schedule(function() callback(nil) end); return end
 
   local has_attachments = _attachments[url] and #_attachments[url] > 0
   local main_catalog = main_catalog_name(db_path)

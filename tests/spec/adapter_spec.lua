@@ -1322,6 +1322,29 @@ test("sqlserver get_schema_batch_async: guard path delivers asynchronously", fun
   assert(fired, "callback must fire once the loop is pumped")
 end)
 
+-- adapters.resolve() matches schemes case-insensitively, but duckdb's own
+-- extract_path patterns are literal lowercase "duckdb:" -- so an uppercase
+-- "DUCKDB:..." URL reaches duckdb.lua (the resolver routed it there) and then
+-- fails extract_path, a real (if obscure) way to hit this guard, not a
+-- contrived one.
+test("duckdb get_schema_batch_async: unparseable URL delivers nil without spawning", function()
+  local spawned = false
+  local orig = vim.system
+  vim.system = function(...) spawned = true; return orig(...) end
+  local result = await_batch(function(cb) duckdb.get_schema_batch_async("DUCKDB:/tmp/x.db", cb) end)
+  vim.system = orig
+  eq(result, nil, "should deliver nil for an unparseable URL")
+  assert(not spawned, "must not spawn duckdb for an unparseable URL")
+end)
+
+test("duckdb get_schema_batch_async: guard path delivers asynchronously", function()
+  local fired = false
+  duckdb.get_schema_batch_async("DUCKDB:/tmp/x.db", function() fired = true end)
+  eq(fired, false, "callback must not fire on the calling tick")
+  vim.wait(200, function() return fired end, 1)
+  assert(fired, "callback must fire once the loop is pumped")
+end)
+
 -- ── SQLite get_indexes ───────────────────────────────────────────────────────
 -- Single pragma_index_list/pragma_index_info join (one spawn) replaces the old
 -- index_list-then-loop-over-index_info (one spawn per index).
