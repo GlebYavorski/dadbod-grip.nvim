@@ -28,7 +28,8 @@ end
 
 --- Build mysql CLI args for a statement, query or DML alike.
 --- Both MySQL and MariaDB use --batch (tab-separated output; --csv is not a
---- mysql CLI flag), and --batch is also what reports affected rows for DML.
+--- mysql CLI flag). --batch reports no affected-row count for DML, which is why
+--- execute() asks for ROW_COUNT() explicitly.
 --- Split out from mysql_query() so the blocking and non-blocking spawns run
 --- byte-identical command lines.
 local function mysql_args(parsed, sql_str)
