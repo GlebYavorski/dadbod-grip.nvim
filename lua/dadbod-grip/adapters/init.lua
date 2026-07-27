@@ -3,13 +3,17 @@
 
 local M = {}
 
---- What both run paths report when the process never answers. One definition so
---- callers can't tell the blocking timeout from the non-blocking one.
+--- Last-resort answer for a spawn whose on_exit never arrives at all. It is *not*
+--- what an ordinary timeout looks like: vim.system's own `timeout` kills the
+--- process and still calls on_exit, so both run paths report that as code 124
+--- with empty stderr (verified live), and callers surface it as "exited with code
+--- 124". This only covers on_exit going missing entirely, and both paths use the
+--- one definition so that case reads the same either way.
 local TIMED_OUT = { stdout = "", stderr = "command timed out", code = 1 }
 
---- Grace period beyond the process timeout, absorbing on_exit callback latency:
---- how long the blocking path keeps polling, and when the non-blocking path's
---- watchdog fires. Exported so tests can shorten the wait.
+--- How long past the process timeout to keep waiting for on_exit before giving
+--- up on it: the blocking path polls this much longer, the non-blocking path's
+--- watchdog fires here. Exported so tests can shorten the wait.
 M._exit_grace_ms = 3000
 
 --- Run a CLI command and wait for it to finish, pumping the full Neovim event
@@ -62,7 +66,9 @@ end
 ---
 --- An on_exit that never fires would strand the caller forever -- there is no
 --- vim.wait here to notice -- so a watchdog delivers the same TIMED_OUT answer
---- the blocking path falls back to, at the same deadline.
+--- the blocking path falls back to, at the same deadline. An ordinary timeout
+--- does not reach it: vim.system kills the process and calls on_exit with code
+--- 124, well before the watchdog is due.
 ---
 --- @param args  string[]   argv for vim.system
 --- @param timeout_ms number|nil  process timeout in ms (default 30000)
