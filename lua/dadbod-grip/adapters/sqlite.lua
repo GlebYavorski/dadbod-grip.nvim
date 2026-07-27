@@ -39,11 +39,14 @@ local function bare_table_name(table_name)
   return tbl:match("^[^.]+%.(.+)$") or tbl
 end
 
+--- argv for one sqlite3 invocation. Split out from sqlite3() so the blocking
+--- and non-blocking spawns run byte-identical command lines.
+local function sqlite3_args(db_path, sql_str)
+  return { "sqlite3", "-init", "", "-csv", "-header", db_path, sql_str }
+end
+
 local function sqlite3(db_path, sql_str, timeout_ms)
-  return adapters.run_cmd(
-    { "sqlite3", "-init", "", "-csv", "-header", db_path, sql_str },
-    timeout_ms or DEFAULT_TIMEOUT
-  )
+  return adapters.run_cmd(sqlite3_args(db_path, sql_str), timeout_ms or DEFAULT_TIMEOUT)
 end
 
 function M.query(sql_str, url)
@@ -203,13 +206,9 @@ function M.get_referencing_foreign_keys(table_name, url)
   return refs, nil
 end
 
---- Fetch all table columns in a single query (O(1) CLI spawns).
---- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
-function M.get_schema_batch(url)
-  local db_path = extract_path(url)
-  if not db_path then return nil end
-
-  local sql_str = [[
+--- The one schema-batch statement, shared by get_schema_batch and
+--- get_schema_batch_async so the two paths can never query different things.
+local SCHEMA_BATCH_SQL = [[
     SELECT m.name AS table_name,
            p.name AS column_name,
            p.type AS data_type,
@@ -219,9 +218,10 @@ function M.get_schema_batch(url)
     ORDER BY m.name, p.cid
   ]]
 
-  local stdout, stderr, code = sqlite3(db_path, sql_str)
-  if code ~= 0 then return nil end
-
+--- Parse SCHEMA_BATCH_SQL's CSV into the completion cache format.
+--- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
+--- The single parser for both the blocking and non-blocking paths.
+local function parse_schema_batch(stdout)
   local parsed = db_util.parse_csv(stdout)
   if not parsed then return nil end
 
@@ -235,6 +235,31 @@ function M.get_schema_batch(url)
     table.insert(tables[tname], { column_name = col_name, data_type = data_type, is_nullable = nullable })
   end
   return tables
+end
+
+--- Fetch all table columns in a single query (O(1) CLI spawns).
+--- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
+function M.get_schema_batch(url)
+  local db_path = extract_path(url)
+  if not db_path then return nil end
+
+  local stdout, _, code = sqlite3(db_path, SCHEMA_BATCH_SQL)
+  if code ~= 0 then return nil end
+
+  return parse_schema_batch(stdout)
+end
+
+--- Async variant: same statement, same parser, non-blocking spawn.
+--- Calls callback(tables), or callback(nil) on a bad URL or a failed sqlite3.
+--- Used to pre-warm the completion cache on connection switch / GripAttach.
+function M.get_schema_batch_async(url, callback)
+  local db_path = extract_path(url)
+  if not db_path then callback(nil); return end
+
+  adapters.run_cmd_async(sqlite3_args(db_path, SCHEMA_BATCH_SQL), DEFAULT_TIMEOUT, function(stdout, _, code)
+    if code ~= 0 then callback(nil); return end
+    callback(parse_schema_batch(stdout))
+  end)
 end
 
 function M.explain(sql_str, url)

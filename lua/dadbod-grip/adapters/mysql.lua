@@ -26,10 +26,12 @@ local function parse_output(stdout)
   return db_util.parse_batch(stdout)
 end
 
---- Build mysql CLI args and run a statement, query or DML alike.
+--- Build mysql CLI args for a statement, query or DML alike.
 --- Both MySQL and MariaDB use --batch (tab-separated output; --csv is not a
 --- mysql CLI flag), and --batch is also what reports affected rows for DML.
-local function mysql_query(parsed, sql_str, timeout_ms)
+--- Split out from mysql_query() so the blocking and non-blocking spawns run
+--- byte-identical command lines.
+local function mysql_args(parsed, sql_str)
   local args = { "mysql", "--batch", "--init-command=SET sql_mode='ANSI_QUOTES,NO_BACKSLASH_ESCAPES'" }
   if parsed.host then
     args[#args + 1] = "-h"
@@ -51,11 +53,26 @@ local function mysql_query(parsed, sql_str, timeout_ms)
   end
   args[#args + 1] = "-e"
   args[#args + 1] = sql_str
+  return args
+end
 
-  local stdout, stderr, code = adapters.run_cmd(args, timeout_ms or DEFAULT_TIMEOUT)
-  -- Strip the known password-on-CLI warning
-  stderr = stderr:gsub("mysql: %[Warning%][^\n]*command line interface can be insecure%.?\n?", "")
-  return stdout, stderr, code
+--- Strip the known password-on-CLI warning mysql writes to stderr on every run.
+local function scrub_stderr(stderr)
+  return (stderr:gsub("mysql: %[Warning%][^\n]*command line interface can be insecure%.?\n?", ""))
+end
+
+--- Run a statement, blocking.
+local function mysql_query(parsed, sql_str, timeout_ms)
+  local stdout, stderr, code = adapters.run_cmd(mysql_args(parsed, sql_str), timeout_ms or DEFAULT_TIMEOUT)
+  return stdout, scrub_stderr(stderr), code
+end
+
+--- Run a statement without blocking; same argv and same stderr scrub as mysql_query.
+local function mysql_query_async(parsed, sql_str, timeout_ms, callback)
+  adapters.run_cmd_async(mysql_args(parsed, sql_str), timeout_ms or DEFAULT_TIMEOUT,
+    function(stdout, stderr, code)
+      callback(stdout, scrub_stderr(stderr), code)
+    end)
 end
 
 function M.query(sql_str, url)
@@ -247,13 +264,9 @@ function M.get_referencing_foreign_keys(table_name, url)
   return db_util.group_referencing_fks(entries), nil
 end
 
---- Fetch all table columns in a single query (O(1) CLI spawns).
---- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
-function M.get_schema_batch(url)
-  local parsed = parse_url(url)
-  if not parsed then return nil end
-
-  local sql_str = [[
+--- The one schema-batch statement, shared by get_schema_batch and
+--- get_schema_batch_async so the two paths can never query different things.
+local SCHEMA_BATCH_SQL = [[
     SELECT
       c.TABLE_NAME AS table_name,
       c.COLUMN_NAME AS column_name,
@@ -273,9 +286,10 @@ function M.get_schema_batch(url)
     ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION
   ]]
 
-  local stdout, stderr, code = mysql_query(parsed, sql_str)
-  if code ~= 0 then return nil end
-
+--- Parse SCHEMA_BATCH_SQL's --batch output into the completion cache format.
+--- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
+--- The single parser for both the blocking and non-blocking paths.
+local function parse_schema_batch(stdout)
   local result = parse_output(stdout)
   if not result then return nil end
 
@@ -289,6 +303,31 @@ function M.get_schema_batch(url)
     table.insert(tables[tname], { column_name = col_name, data_type = data_type, is_nullable = nullable })
   end
   return tables
+end
+
+--- Fetch all table columns in a single query (O(1) CLI spawns).
+--- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
+function M.get_schema_batch(url)
+  local parsed = parse_url(url)
+  if not parsed then return nil end
+
+  local stdout, _, code = mysql_query(parsed, SCHEMA_BATCH_SQL)
+  if code ~= 0 then return nil end
+
+  return parse_schema_batch(stdout)
+end
+
+--- Async variant: same statement, same parser, non-blocking spawn.
+--- Calls callback(tables), or callback(nil) on a bad URL or a failed mysql.
+--- Used to pre-warm the completion cache on connection switch / GripAttach.
+function M.get_schema_batch_async(url, callback)
+  local parsed = parse_url(url)
+  if not parsed then callback(nil); return end
+
+  mysql_query_async(parsed, SCHEMA_BATCH_SQL, nil, function(stdout, _, code)
+    if code ~= 0 then callback(nil); return end
+    callback(parse_schema_batch(stdout))
+  end)
 end
 
 function M.explain(sql_str, url)

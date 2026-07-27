@@ -20,11 +20,13 @@ local function split_table_name(table_name, default_schema)
   return sql_util.split_table_name(table_name, default_schema or "dbo")
 end
 
---- Build and run the sqlcmd command.
+--- Build the sqlcmd argv.
 --- `opts.nocount` (default true) controls whether `SET NOCOUNT ON` is prefixed:
 --- `query` wants it (so "(N rows affected)" doesn't pollute the result grid),
 --- `execute` needs it off (so that same message is present for row-count parsing).
-local function sqlcmd(parsed, sql_str, timeout_ms, opts)
+--- Split out from sqlcmd() so the blocking and non-blocking spawns run
+--- byte-identical command lines.
+local function sqlcmd_args(parsed, sql_str, opts)
   opts = opts or {}
   local nocount = opts.nocount
   if nocount == nil then nocount = true end
@@ -58,7 +60,12 @@ local function sqlcmd(parsed, sql_str, timeout_ms, opts)
     table.insert(args, 4, "-E")
   end
 
-  return adapters.run_cmd(args, timeout_ms or DEFAULT_TIMEOUT)
+  return args
+end
+
+--- Build and run the sqlcmd command, blocking.
+local function sqlcmd(parsed, sql_str, timeout_ms, opts)
+  return adapters.run_cmd(sqlcmd_args(parsed, sql_str, opts), timeout_ms or DEFAULT_TIMEOUT)
 end
 
 local function parse_sqlcmd_table(raw)
@@ -112,6 +119,27 @@ local function run_query(sql_str, url, timeout_ms)
     return nil, stderr ~= "" and stderr or ("sqlcmd exited with code " .. code)
   end
   return parse_sqlcmd_table(stdout), nil
+end
+
+--- Non-blocking twin of run_query: same argv, same output parser, same guards.
+--- Delivers (result, err) to `callback` instead of returning them.
+local function run_query_async(sql_str, url, timeout_ms, callback)
+  if vim.fn.executable("sqlcmd") == 0 then
+    callback(nil, "sqlcmd not found. Install Microsoft sqlcmd tools.")
+    return
+  end
+
+  local parsed = parse_url(url)
+  if not parsed then callback(nil, "Invalid SQL Server URL: " .. url); return end
+
+  adapters.run_cmd_async(sqlcmd_args(parsed, sql_str), timeout_ms or DEFAULT_TIMEOUT,
+    function(stdout, stderr, code)
+      if code ~= 0 then
+        callback(nil, stderr ~= "" and stderr or ("sqlcmd exited with code " .. code))
+        return
+      end
+      callback(parse_sqlcmd_table(stdout), nil)
+    end)
 end
 
 function M.query(sql_str, url)
@@ -261,11 +289,12 @@ function M.get_foreign_keys(table_name, url)
   return fks, nil
 end
 
-function M.get_schema_batch(url)
-  -- data_type formatting mirrors get_column_info's expression exactly (length/precision
-  -- suffix) so callers get the same string whether a table came from the batch or from
-  -- a per-table fallback call.
-  local result = run_query([[
+--- The one schema-batch statement, shared by get_schema_batch and
+--- get_schema_batch_async so the two paths can never query different things.
+--- data_type formatting mirrors get_column_info's expression exactly (length/precision
+--- suffix) so callers get the same string whether a table came from the batch or from
+--- a per-table fallback call.
+local SCHEMA_BATCH_SQL = [[
     SELECT
       CASE WHEN TABLE_SCHEMA = 'dbo' THEN TABLE_NAME ELSE TABLE_SCHEMA + '.' + TABLE_NAME END AS table_name,
       COLUMN_NAME,
@@ -281,7 +310,12 @@ function M.get_schema_batch(url)
       IS_NULLABLE
     FROM INFORMATION_SCHEMA.COLUMNS
     ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
-  ]], url)
+  ]]
+
+--- Turn SCHEMA_BATCH_SQL's parsed rows into the completion cache format.
+--- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
+--- The single parser for both the blocking and non-blocking paths.
+local function parse_schema_batch(result)
   if not result then return nil end
   local tables = {}
   for _, row in ipairs(result.rows) do
@@ -294,6 +328,20 @@ function M.get_schema_batch(url)
     })
   end
   return tables
+end
+
+function M.get_schema_batch(url)
+  local result = run_query(SCHEMA_BATCH_SQL, url)
+  return parse_schema_batch(result)
+end
+
+--- Async variant: same statement, same parser, non-blocking spawn.
+--- Calls callback(tables), or callback(nil) when sqlcmd is missing or fails.
+--- Used to pre-warm the completion cache on connection switch / GripAttach.
+function M.get_schema_batch_async(url, callback)
+  run_query_async(SCHEMA_BATCH_SQL, url, nil, function(result)
+    callback(parse_schema_batch(result))
+  end)
 end
 
 function M.get_indexes(table_name, url)

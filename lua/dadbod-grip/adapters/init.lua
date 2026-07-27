@@ -38,6 +38,30 @@ function M.run_cmd(args, timeout_ms)
   return r.stdout or "", r.stderr or "", r.code
 end
 
+--- Non-blocking twin of M.run_cmd: spawns the process and delivers
+--- (stdout, stderr, exit_code) to `callback` from the main Neovim loop via
+--- vim.schedule, so the callback may touch buffers and Lua state freely.
+--- Used by the get_schema_batch_async implementations that pre-warm the
+--- completion cache; no vim.wait here, that is the whole point.
+---
+--- Same never-throw contract as M.run_cmd: vim.system() raises on spawn failure
+--- (ENOENT when the CLI is not installed), so that is caught and reported as a
+--- non-zero exit instead of escaping into the caller's callback-free stack.
+---
+--- @param args  string[]   argv for vim.system
+--- @param timeout_ms number|nil  process timeout in ms (default 30000)
+--- @param callback fun(stdout: string, stderr: string, code: number)
+function M.run_cmd_async(args, timeout_ms, callback)
+  local ok, err = pcall(vim.system, args, { text = true, timeout = timeout_ms or 30000 }, function(r)
+    vim.schedule(function()
+      callback(r.stdout or "", r.stderr or "", r.code)
+    end)
+  end)
+  if not ok then
+    vim.schedule(function() callback("", tostring(err), 1) end)
+  end
+end
+
 local SCHEME_MAP = {
   ["postgresql://"] = "dadbod-grip.adapters.postgresql",
   ["postgres://"]   = "dadbod-grip.adapters.postgresql",

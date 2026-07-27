@@ -16,11 +16,14 @@ local function split_table_name(table_name)
   return sql_util.split_table_name(table_name, "public")
 end
 
+--- argv for one psql invocation. Split out from psql() so the blocking and
+--- non-blocking spawns run byte-identical command lines.
+local function psql_args(url, sql_str)
+  return { "psql", url, "-X", "--no-password", "--csv", "-c", sql_str }
+end
+
 local function psql(url, sql_str, timeout_ms)
-  return adapters.run_cmd(
-    { "psql", url, "-X", "--no-password", "--csv", "-c", sql_str },
-    timeout_ms or DEFAULT_TIMEOUT
-  )
+  return adapters.run_cmd(psql_args(url, sql_str), timeout_ms or DEFAULT_TIMEOUT)
 end
 
 local function split_routine_name(routine_name)
@@ -223,11 +226,9 @@ function M.get_referencing_foreign_keys(table_name, url)
   return db_util.group_referencing_fks(entries), nil
 end
 
---- Fetch all table columns in a single query (O(1) CLI spawns).
---- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
---- public-schema tables use bare names ("users"); other schemas use "schema.table".
-function M.get_schema_batch(url)
-  local sql_str = [[
+--- The one schema-batch statement, shared by get_schema_batch and
+--- get_schema_batch_async so the two paths can never query different things.
+local SCHEMA_BATCH_SQL = [[
     SELECT
       table_schema,
       table_name,
@@ -238,9 +239,13 @@ function M.get_schema_batch(url)
     WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
     ORDER BY table_schema, table_name, ordinal_position
   ]]
-  local stdout, stderr, code = psql(url, sql_str)
-  if code ~= 0 then return nil end
 
+--- Parse SCHEMA_BATCH_SQL's CSV into the completion cache format.
+--- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
+--- public-schema tables use bare names ("users"); other schemas use "schema.table",
+--- matching list_tables() output. The single parser for both the blocking and
+--- non-blocking paths.
+local function parse_schema_batch(stdout)
   local parsed = db_util.parse_csv(stdout)
   if not parsed then return nil end
 
@@ -256,6 +261,25 @@ function M.get_schema_batch(url)
     table.insert(tables[full_name], { column_name = col_name, data_type = data_type, is_nullable = nullable })
   end
   return tables
+end
+
+--- Fetch all table columns in a single query (O(1) CLI spawns).
+--- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
+function M.get_schema_batch(url)
+  local stdout, _, code = psql(url, SCHEMA_BATCH_SQL)
+  if code ~= 0 then return nil end
+
+  return parse_schema_batch(stdout)
+end
+
+--- Async variant: same statement, same parser, non-blocking spawn.
+--- Calls callback(tables), or callback(nil) when psql fails.
+--- Used to pre-warm the completion cache on connection switch / GripAttach.
+function M.get_schema_batch_async(url, callback)
+  adapters.run_cmd_async(psql_args(url, SCHEMA_BATCH_SQL), DEFAULT_TIMEOUT, function(stdout, _, code)
+    if code ~= 0 then callback(nil); return end
+    callback(parse_schema_batch(stdout))
+  end)
 end
 
 function M.explain(sql_str, url)
