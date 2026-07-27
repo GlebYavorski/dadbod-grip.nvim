@@ -80,6 +80,17 @@ local function extract_path(url)
   return path
 end
 
+--- Name DuckDB gives the main catalog: the file's basename without its
+--- extension ("softrear" for /data/softrear.duckdb), or "memory" for the
+--- in-memory instance. Every catalog query that has to name the main database
+--- in a string literal goes through here -- the path patterns alone never
+--- yield "memory", because ":memory:" has no dot-extension and falls through
+--- to the basename branch, which returns ":memory:" itself and matches nothing.
+local function main_catalog_name(db_path)
+  if db_path == ":memory:" then return "memory" end
+  return db_path:match("([^/]+)%.[^.]+$") or db_path:match("([^/]+)$") or "memory"
+end
+
 --- Split a DuckDB table name into (catalog, schema, table).
 --- Distinguishes attached catalogs from native schemas by checking _attachments.
 ---   "supplier.shipments"  (supplier is an ATTACH alias) -> ("supplier", "main", "shipments")
@@ -259,7 +270,7 @@ function M.get_primary_keys(table_name, url)
   else
     -- Main DB: use duckdb_constraints() with a string-literal database_name filter
     -- (same reason as get_column_info — information_schema fails with attachments).
-    local main_catalog = db_path:match("([^/]+)%.[^.]+$") or db_path:match("([^/]+)$") or "memory"
+    local main_catalog = main_catalog_name(db_path)
     sql_str = string.format([[
       SELECT UNNEST(constraint_column_names) AS column_name
       FROM duckdb_constraints()
@@ -320,7 +331,7 @@ function M.get_column_info(table_name, url)
     -- duckdb_columns() with WHERE database_name = '...' is immune to this.
     -- Catalog names from tempname-style paths may start with digits (invalid SQL identifiers),
     -- so string literals are required here rather than catalog-qualified syntax.
-    local main_catalog = db_path:match("([^/]+)%.[^.]+$") or db_path:match("([^/]+)$") or "memory"
+    local main_catalog = main_catalog_name(db_path)
     info_sql = string.format([[
       SELECT
         column_name,
@@ -521,7 +532,7 @@ function M.list_tables(url)
   if has_attachments then
     -- Derive the main database's catalog name from the file path.
     -- DuckDB names catalogs after the filename (e.g., "softrear" for softrear.duckdb).
-    local main_catalog = db_path:match("([^/]+)%.[^.]+$") or db_path:match("([^/]+)$") or "memory"
+    local main_catalog = main_catalog_name(db_path)
     for _, row in ipairs(parsed.rows) do
       local catalog    = row[1] or main_catalog
       local schema_name = row[2] or "main"
@@ -860,8 +871,15 @@ end
 --- column_name, data_type, is_nullable, column_index) sourced from duckdb_columns() /
 --- duckdb_views() -- the exact tables get_column_info itself reads, so batch and
 --- per-table fallback can never disagree on data_type/is_nullable formatting again.
---- 'col' rows = real columns (duckdb_columns() does not cover views).
---- 'tbl' rows = view names only, registered with column_index 0 (no columns).
+--- 'col' rows = real columns. duckdb_columns() covers views too, as long as the
+--- view lives in a DuckDB catalog -- verified on the CLI (v1.0.0 and v1.5.5):
+--- a `CREATE VIEW v AS SELECT id, name, id*2 AS doubled` yields three 'col' rows
+--- for v, the same three information_schema.columns used to return.
+--- 'tbl' rows = view names, registered with column_index 0 so they sort first.
+--- They are the only source for views in *attached non-DuckDB* catalogs, which
+--- neither duckdb_columns() nor information_schema.columns knows the columns of
+--- (also verified on the CLI, with a SQLite attachment); those views stay
+--- name-only, exactly as before the two branches were unified.
 --- Without attachments the scan is restricted to the main catalog (matches
 --- get_column_info's main-catalog behavior exactly); with attachments it is left
 --- unrestricted so duckdb_columns()/duckdb_views() also pick up attached catalogs.
@@ -916,7 +934,10 @@ local function _parse_schema_batch_rows(parsed, main_catalog)
       tables[full_name] = tables[full_name] or {}
       table.insert(tables[full_name], { column_name = col_name, data_type = data_type, is_nullable = is_nullable })
     else
-      -- View row: duckdb_columns() does not include views, so register them name-only.
+      -- View row. Registers the name without touching an existing entry: views in
+      -- DuckDB catalogs already got their columns from duckdb_columns(), and this
+      -- row sorts first (column_index 0), so it must never replace them. Views in
+      -- attached non-DuckDB catalogs have no column source at all and stay empty.
       tables[full_name] = tables[full_name] or {}
     end
   end
@@ -934,7 +955,7 @@ function M.get_schema_batch(url)
   if not db_path then return nil end
 
   local has_attachments = _attachments[url] and #_attachments[url] > 0
-  local main_catalog = db_path:match("([^/]+)%.[^.]+$") or db_path:match("([^/]+)$") or "memory"
+  local main_catalog = main_catalog_name(db_path)
   local sql_str = _make_schema_batch_sql(has_attachments, main_catalog)
 
   local stdout, _, code = duckdb(db_path, sql_str, nil, url)
@@ -950,7 +971,7 @@ function M.get_schema_batch_async(url, callback)
   if not db_path then callback(nil); return end
 
   local has_attachments = _attachments[url] and #_attachments[url] > 0
-  local main_catalog = db_path:match("([^/]+)%.[^.]+$") or db_path:match("([^/]+)$") or "memory"
+  local main_catalog = main_catalog_name(db_path)
   local sql_str = _make_schema_batch_sql(has_attachments, main_catalog)
 
   duckdb_async(db_path, sql_str, 8000, url, function(stdout, _, code)
@@ -974,5 +995,6 @@ M._build_attach_prefix = build_attach_prefix
 M._detect_extension = detect_extension
 M._attach_unchecked = store_attachment
 M._make_schema_batch_sql = _make_schema_batch_sql
+M._main_catalog_name = main_catalog_name
 
 return M

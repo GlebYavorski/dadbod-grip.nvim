@@ -1162,6 +1162,56 @@ test("duckdb _make_schema_batch_sql: is_nullable sourced from duckdb_columns(), 
   contains(sql_no_att, "duckdb_views()", "views still registered name-only via duckdb_views()")
 end)
 
+-- ── duckdb: main catalog name ───────────────────────────────────────────────
+-- DuckDB names the main catalog after the file's basename without extension,
+-- and calls the in-memory one "memory". The batch/column/PK/table queries all
+-- filter on that name as a string literal, so getting ":memory:" wrong there
+-- makes every one of them match nothing.
+
+test("duckdb _main_catalog_name: :memory: maps to DuckDB's 'memory' catalog", function()
+  eq(duckdb._main_catalog_name(":memory:"), "memory", "in-memory catalog is named 'memory'")
+end)
+
+test("duckdb _main_catalog_name: file paths keep the basename without extension", function()
+  eq(duckdb._main_catalog_name("/data/softrear.duckdb"), "softrear", "absolute path")
+  eq(duckdb._main_catalog_name("softrear.db"), "softrear", "relative path")
+  eq(duckdb._main_catalog_name("/data/noext"), "noext", "no extension")
+end)
+
+test("duckdb _make_schema_batch_sql: :memory: filters on 'memory', never ':memory:'", function()
+  -- The old inline expression produced "database_name = ':memory:'", which matches
+  -- no row at all -- get_schema_batch then returned {} and completion cached an
+  -- empty schema with nothing to fall back to.
+  local sql_mem = duckdb._make_schema_batch_sql(false, duckdb._main_catalog_name(":memory:"))
+  contains(sql_mem, "database_name = 'memory'", "filters on the real catalog name")
+  assert(not sql_mem:find(":memory:", 1, true), "the raw path must never reach the filter")
+end)
+
+test("duckdb get_schema_batch: view columns survive the name-only view row", function()
+  -- duckdb_columns() does cover views in DuckDB catalogs, and its rows arrive
+  -- after the duckdb_views() row (column_index 0 sorts first). The 'tbl' branch
+  -- must register the name without clearing what 'col' rows added.
+  local csv_stdout = table.concat({
+    "rtype,database_name,schema_name,table_name,column_name,data_type,is_nullable,column_index",
+    "tbl,plain,main,v,,,,0",
+    "col,plain,main,v,id,INTEGER,YES,1",
+    "col,plain,main,v,doubled,INTEGER,YES,2",
+    "tbl,sup,main,sv,,,,0",
+  }, "\n") .. "\n"
+
+  local result
+  with_system_mock(csv_stdout, "", 0, function()
+    result = duckdb.get_schema_batch("duckdb:plain.db")
+  end)
+
+  assert(result ~= nil, "result must not be nil")
+  eq(#result["v"], 2, "view keeps the columns duckdb_columns() reported")
+  eq(result["v"][1].column_name, "id", "first view column")
+  eq(result["v"][2].column_name, "doubled", "second view column")
+  assert(result["sup.sv"] ~= nil, "attached-catalog view still registered name-only")
+  eq(#result["sup.sv"], 0, "no column source exists for views in attached non-DuckDB catalogs")
+end)
+
 -- ── Completion: get_schema prefers batch over per-table ─────────────────────
 -- When get_schema_batch returns data, list_tables + get_column_info must NOT be called.
 
