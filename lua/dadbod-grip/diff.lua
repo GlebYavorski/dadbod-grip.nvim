@@ -169,7 +169,8 @@ local function render_unified(diff_result, left, right, columns, avail_width)
     adjust_widths(widths, columns, avail_width)
   end
 
-  -- Render header
+  -- Render header. Pads only -- ui.pad_display always truncates, and header
+  -- cells are deliberately allowed to overflow (see format_header below).
   local function pad(s, w) return s .. string.rep(" ", math.max(0, w - vim.fn.strdisplaywidth(s))) end
   local function format_row(row_data, col_idx_map, suffix)
     local parts = {}
@@ -177,8 +178,7 @@ local function render_unified(diff_result, left, right, columns, avail_width)
       local idx = col_idx_map[col]
       local v = idx and row_data[idx] or ""
       -- "~" (not ui.lua's default "…") to match this module's established style.
-      v = ui.truncate_display(v, widths[col], true, "~")
-      table.insert(parts, pad(v, widths[col]))
+      table.insert(parts, (ui.pad_display(v, widths[col], true, "~")))
     end
     local line = "  " .. table.concat(parts, " | ")
     if suffix then line = line .. "  " .. suffix end

@@ -2238,6 +2238,7 @@ local function make_keymap_ctx(bufnr)
 
   return ctx
 end
+
 --- Wire all buffer-local grid keymaps and the column-highlight autocmd.
 --- Section order is load bearing (see the note above make_keymap_ctx).
 function M._setup_keymaps(bufnr)

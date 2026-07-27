@@ -221,11 +221,14 @@ end)
 -- that keeps that one combination from widening past the old scan's strictness.
 
 test("filter_referencing: bare table name is never filtered, any kind", function()
+  -- A trailing nil in the list literal would end ipairs early and silently skip
+  -- the unresolved-kind case, so it is asserted separately below the loop.
   local refs = { { table = "orders", column = "user_id", ref_column = "id" } }
-  for _, kind in ipairs({ "postgresql", "mysql", "duckdb", "sqlite", "sqlserver", nil }) do
+  for _, kind in ipairs({ "postgresql", "mysql", "duckdb", "sqlite", "sqlserver" }) do
     local out = ddl._filter_referencing(refs, "users", kind)
-    eq(#out, 1, "kind=" .. tostring(kind))
+    eq(#out, 1, "kind=" .. kind)
   end
+  eq(#ddl._filter_referencing(refs, "users", nil), 1, "kind=nil")
 end)
 
 test("filter_referencing: schema-qualified name kept for schema-exact adapters", function()
