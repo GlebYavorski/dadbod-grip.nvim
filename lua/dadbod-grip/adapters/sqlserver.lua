@@ -205,20 +205,30 @@ function M.list_tables(url)
   return out, nil
 end
 
-function M.get_column_info(table_name, url)
-  local schema, tbl = split_table_name(table_name, "dbo")
-  local sql_str = string.format([[
-    SELECT
-      COLUMN_NAME,
+--- The length/precision-suffixed data_type expression, interpolated into both
+--- get_column_info and SCHEMA_BATCH_SQL so the two can never drift: callers must
+--- get the same string whether a table came from the batch or a per-table call.
+--- SQL Server reports CHARACTER_MAXIMUM_LENGTH = -1 for the MAX types
+--- (nvarchar(max), varbinary(max)), hence the dedicated arm ahead of the
+--- positive-length one.
+local DATA_TYPE_EXPR = [[
       DATA_TYPE +
         CASE
+          WHEN CHARACTER_MAXIMUM_LENGTH = -1 THEN '(max)'
           WHEN CHARACTER_MAXIMUM_LENGTH IS NOT NULL AND CHARACTER_MAXIMUM_LENGTH > 0
             THEN '(' + CAST(CHARACTER_MAXIMUM_LENGTH AS varchar(20)) + ')'
           WHEN NUMERIC_PRECISION IS NOT NULL AND DATA_TYPE NOT IN ('int','bigint','smallint','tinyint','bit')
             THEN '(' + CAST(NUMERIC_PRECISION AS varchar(20)) +
                  CASE WHEN NUMERIC_SCALE > 0 THEN ',' + CAST(NUMERIC_SCALE AS varchar(20)) ELSE '' END + ')'
           ELSE ''
-        END AS data_type,
+        END AS data_type]]
+
+function M.get_column_info(table_name, url)
+  local schema, tbl = split_table_name(table_name, "dbo")
+  local sql_str = string.format([[
+    SELECT
+      COLUMN_NAME,
+%s,
       IS_NULLABLE,
       COALESCE(COLUMN_DEFAULT, '') AS column_default,
       ''
@@ -226,7 +236,7 @@ function M.get_column_info(table_name, url)
     WHERE TABLE_SCHEMA = '%s'
       AND TABLE_NAME = '%s'
     ORDER BY ORDINAL_POSITION
-  ]], esc(schema), esc(tbl))
+  ]], DATA_TYPE_EXPR, esc(schema), esc(tbl))
 
   local result, err = run_query(sql_str, url)
   if not result then return nil, err end
@@ -305,26 +315,16 @@ end
 
 --- The one schema-batch statement, shared by get_schema_batch and
 --- get_schema_batch_async so the two paths can never query different things.
---- data_type formatting mirrors get_column_info's expression exactly (length/precision
---- suffix) so callers get the same string whether a table came from the batch or from
---- a per-table fallback call.
-local SCHEMA_BATCH_SQL = [[
+--- data_type comes from the same DATA_TYPE_EXPR get_column_info uses.
+local SCHEMA_BATCH_SQL = string.format([[
     SELECT
       CASE WHEN TABLE_SCHEMA = 'dbo' THEN TABLE_NAME ELSE TABLE_SCHEMA + '.' + TABLE_NAME END AS table_name,
       COLUMN_NAME,
-      DATA_TYPE +
-        CASE
-          WHEN CHARACTER_MAXIMUM_LENGTH IS NOT NULL AND CHARACTER_MAXIMUM_LENGTH > 0
-            THEN '(' + CAST(CHARACTER_MAXIMUM_LENGTH AS varchar(20)) + ')'
-          WHEN NUMERIC_PRECISION IS NOT NULL AND DATA_TYPE NOT IN ('int','bigint','smallint','tinyint','bit')
-            THEN '(' + CAST(NUMERIC_PRECISION AS varchar(20)) +
-                 CASE WHEN NUMERIC_SCALE > 0 THEN ',' + CAST(NUMERIC_SCALE AS varchar(20)) ELSE '' END + ')'
-          ELSE ''
-        END AS data_type,
+%s,
       IS_NULLABLE
     FROM INFORMATION_SCHEMA.COLUMNS
     ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
-  ]]
+  ]], DATA_TYPE_EXPR)
 
 --- Turn SCHEMA_BATCH_SQL's parsed rows into the completion cache format.
 --- Returns { [table_name] = [{column_name, data_type, is_nullable}] } or nil.
