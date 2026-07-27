@@ -162,13 +162,22 @@ end
 --- Non-blocking twin of run_query: same argv, same output parser, same guards.
 --- Delivers (result, err) to `callback` instead of returning them.
 local function run_query_async(sql_str, url, timeout_ms, callback)
+  -- Both guards below deliver via vim.schedule: run_cmd_async's contract is
+  -- that the callback never fires on the calling tick, and a caller must not
+  -- be able to tell a guard rejection from a spawn failure by that timing
+  -- difference.
   if vim.fn.executable("sqlcmd") == 0 then
-    callback(nil, "sqlcmd not found. Install Microsoft sqlcmd tools.")
+    vim.schedule(function()
+      callback(nil, "sqlcmd not found. Install Microsoft sqlcmd tools.")
+    end)
     return
   end
 
   local parsed = parse_url(url)
-  if not parsed then callback(nil, "Invalid SQL Server URL: " .. url); return end
+  if not parsed then
+    vim.schedule(function() callback(nil, "Invalid SQL Server URL: " .. url) end)
+    return
+  end
 
   adapters.run_cmd_async(sqlcmd_args(parsed, sql_str), timeout_ms or DEFAULT_TIMEOUT,
     function(stdout, stderr, code)

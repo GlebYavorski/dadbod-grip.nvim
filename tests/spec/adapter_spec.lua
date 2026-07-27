@@ -1206,6 +1206,14 @@ test("mysql get_schema_batch_async: unparseable URL delivers nil without spawnin
   assert(not spawned, "must not spawn mysql for an unparseable URL")
 end)
 
+test("mysql get_schema_batch_async: guard path delivers asynchronously", function()
+  local fired = false
+  mysql.get_schema_batch_async("mysql://", function() fired = true end)
+  eq(fired, false, "callback must not fire on the calling tick")
+  vim.wait(200, function() return fired end, 1)
+  assert(fired, "callback must fire once the loop is pumped")
+end)
+
 test("sqlite get_schema_batch_async: delivers columns keyed by table name", function()
   local csv_stdout = table.concat({
     "table_name,column_name,data_type,is_nullable",
@@ -1244,6 +1252,14 @@ test("sqlite get_schema_batch_async: pathless URL delivers nil without spawning"
   vim.system = orig
   eq(result, nil, "should deliver nil when no path can be extracted")
   assert(not spawned, "must not spawn sqlite3 without a db path")
+end)
+
+test("sqlite get_schema_batch_async: guard path delivers asynchronously", function()
+  local fired = false
+  sqlite.get_schema_batch_async("sqlite:", function() fired = true end)
+  eq(fired, false, "callback must not fire on the calling tick")
+  vim.wait(200, function() return fired end, 1)
+  assert(fired, "callback must fire once the loop is pumped")
 end)
 
 test("sqlserver get_schema_batch_async: delivers columns keyed by table name", function()
@@ -1293,6 +1309,17 @@ test("sqlserver get_schema_batch_async: missing sqlcmd delivers nil without spaw
   vim.system, vim.fn.executable = orig_sys, orig_exe
   eq(result, nil, "should deliver nil when sqlcmd is absent")
   assert(not spawned, "must not spawn a missing sqlcmd")
+end)
+
+test("sqlserver get_schema_batch_async: guard path delivers asynchronously", function()
+  local orig_exe = vim.fn.executable
+  vim.fn.executable = function() return 0 end
+  local fired = false
+  sqlserver.get_schema_batch_async("sqlserver://sa:pw@localhost:1433/testdb", function() fired = true end)
+  vim.fn.executable = orig_exe
+  eq(fired, false, "callback must not fire on the calling tick")
+  vim.wait(200, function() return fired end, 1)
+  assert(fired, "callback must fire once the loop is pumped")
 end)
 
 -- ── SQLite get_indexes ───────────────────────────────────────────────────────

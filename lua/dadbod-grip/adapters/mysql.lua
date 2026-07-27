@@ -310,7 +310,10 @@ end
 --- Used to pre-warm the completion cache on connection switch / GripAttach.
 function M.get_schema_batch_async(url, callback)
   local parsed = parse_url(url)
-  if not parsed then callback(nil); return end
+  -- Deliver via vim.schedule even on this guard path: run_cmd_async's contract
+  -- is that the callback never fires on the calling tick, and a caller must not
+  -- be able to tell a bad URL from a spawn failure by that timing difference.
+  if not parsed then vim.schedule(function() callback(nil) end); return end
 
   mysql_query_async(parsed, SCHEMA_BATCH_SQL, nil, function(stdout, _, code)
     if code ~= 0 then callback(nil); return end

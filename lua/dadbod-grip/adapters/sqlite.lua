@@ -254,7 +254,10 @@ end
 --- Used to pre-warm the completion cache on connection switch / GripAttach.
 function M.get_schema_batch_async(url, callback)
   local db_path = extract_path(url)
-  if not db_path then callback(nil); return end
+  -- Deliver via vim.schedule even on this guard path: run_cmd_async's contract
+  -- is that the callback never fires on the calling tick, and a caller must not
+  -- be able to tell a bad URL from a spawn failure by that timing difference.
+  if not db_path then vim.schedule(function() callback(nil) end); return end
 
   adapters.run_cmd_async(sqlite3_args(db_path, SCHEMA_BATCH_SQL), DEFAULT_TIMEOUT, function(stdout, _, code)
     if code ~= 0 then callback(nil); return end
