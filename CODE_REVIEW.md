@@ -363,7 +363,9 @@ docker run -d --platform linux/amd64 --name grip-mssql -e ACCEPT_EULA=Y \
   (CJK, эмодзи, диакритика, табы), ноль расхождений.
 
 Два «спорных» — не корректность, а качество кода, оба вынесены в §11: срез `%b()` в
-`profile.classify_column` и ставший недостижимым фоллбэк reverse-FK.
+`profile.classify_column` и ставший недостижимым фоллбэк reverse-FK. Из её же «мелочей» сразу
+закрыта одна: `ui.lua:39` (`ell_w <= width and width <= ell_w` → `ell_w == width`, `db0595b`,
+поведение не менялось).
 
 ## 11. Что осталось
 
@@ -423,8 +425,6 @@ docker run -d --platform linux/amd64 --name grip-mssql -e ACCEPT_EULA=Y \
   шаблон `M.setup(bufnr, ctx)`); список 17 разрешённых полей `ctx.view` в комментарии не
   проверяется автоматически.
 - `history._count_lines` читает файл целиком на каждый `record()` (принятый размен, ≤750 строк).
-- `ui.lua:39`: `ell_w <= width and width <= ell_w` — это `ell_w == width`, записанное двумя
-  неравенствами; читается как недописанный рефакторинг.
 - Замороженный §6 всё ещё формулирует CASCADE/NOCOUNT как «требующие решения» — указатель на §8
   стоит, сама правка при следующей разморозке §1–6.
 
