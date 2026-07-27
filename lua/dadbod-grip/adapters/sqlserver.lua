@@ -2,6 +2,7 @@
 -- Read-only grid support for v1. All functions return (result, err).
 
 local adapters = require("dadbod-grip.adapters")
+local db_util  = require("dadbod-grip.db")
 local sql_util = require("dadbod-grip.sql")
 local esc = sql_util.escape_literal
 
@@ -203,6 +204,54 @@ function M.list_tables(url)
     table.insert(out, { name = row[1] or "", type = row[2] or "table" })
   end
   return out, nil
+end
+
+--- Reverse FK lookup: which tables reference table_name?
+--- One schema-aware sys.foreign_keys query, so a qualified target
+--- ("dbo.users") is resolved server-side instead of going through db.lua's
+--- bare-name scan, which ddl._filter_referencing has to discard as ambiguous.
+--- Returns { {table, column, ref_column, composite?}, ... }, err.
+function M.get_referencing_foreign_keys(table_name, url)
+  local schema, tbl = split_table_name(table_name, "dbo")
+  local sql_str = string.format([[
+    SELECT
+      cs.name AS child_schema,
+      ct.name AS child_table,
+      cc.name AS fk_column,
+      rc.name AS ref_column,
+      fk.name AS constraint_name
+    FROM sys.foreign_keys fk
+    JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+    JOIN sys.tables ct ON ct.object_id = fk.parent_object_id
+    JOIN sys.schemas cs ON cs.schema_id = ct.schema_id
+    JOIN sys.tables pt ON pt.object_id = fk.referenced_object_id
+    JOIN sys.schemas ps ON ps.schema_id = pt.schema_id
+    JOIN sys.columns cc ON cc.object_id = fkc.parent_object_id
+      AND cc.column_id = fkc.parent_column_id
+    JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id
+      AND rc.column_id = fkc.referenced_column_id
+    WHERE ps.name = '%s'
+      AND pt.name = '%s'
+    ORDER BY cs.name, ct.name, fk.name, fkc.constraint_column_id
+  ]], esc(schema), esc(tbl))
+
+  local result, err = run_query(sql_str, url)
+  if not result then return {}, err end
+
+  local entries = {}
+  for _, row in ipairs(result.rows) do
+    local child_schema = row[1] or "dbo"
+    local child_tbl = row[2] or ""
+    -- Same naming as list_tables: dbo is implicit, other schemas are qualified.
+    local full_name = (child_schema == "dbo") and child_tbl or (child_schema .. "." .. child_tbl)
+    table.insert(entries, {
+      table      = full_name,
+      column     = row[3] or "",
+      ref_column = row[4] or "",
+      key        = row[5] or "",
+    })
+  end
+  return db_util.group_referencing_fks(entries), nil
 end
 
 --- The length/precision-suffixed data_type expression, interpolated into both

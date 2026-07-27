@@ -15,10 +15,12 @@ local CASCADE_KINDS = { postgresql = true, duckdb = true }
 
 -- Adapters whose db.get_referencing_foreign_keys() has a dedicated query that
 -- filters by schema+table server-side (see each adapter's own
--- get_referencing_foreign_keys). sqlserver has none, so db.lua falls back to
--- a bare-name scan there (matches any table sharing the bare name, regardless
--- of schema) -- see M._filter_referencing below.
-local SCHEMA_EXACT_REF_KINDS = { postgresql = true, mysql = true, duckdb = true, sqlite = true }
+-- get_referencing_foreign_keys). An adapter missing one falls back to db.lua's
+-- bare-name scan (matches any table sharing the bare name, regardless of
+-- schema), which guard (2) in M._filter_referencing below has to discard.
+local SCHEMA_EXACT_REF_KINDS = {
+  postgresql = true, mysql = true, duckdb = true, sqlite = true, sqlserver = true,
+}
 
 local function bare(name)
   return (name or ""):match("([^.]+)$")
