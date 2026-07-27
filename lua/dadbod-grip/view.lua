@@ -2138,7 +2138,10 @@ local KEYMAP_SECTIONS = {
   require("dadbod-grip.view.keymaps_sort_filter"),
   require("dadbod-grip.view.keymaps_fk"),
   require("dadbod-grip.view.keymaps_aggregate"),
-  require("dadbod-grip.view.keymaps_tool"),
+  require("dadbod-grip.view.keymaps_schema"),
+  require("dadbod-grip.view.keymaps_session"),
+  require("dadbod-grip.view.keymaps_ai"),
+  require("dadbod-grip.view.keymaps_results"),
   require("dadbod-grip.view.keymaps_tab_view"),
   require("dadbod-grip.view.column_highlight"),
 }
