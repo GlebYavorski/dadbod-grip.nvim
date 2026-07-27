@@ -292,6 +292,84 @@ test("filter_referencing: self-reference matched on bare name across schemas", f
   eq(#ddl._filter_referencing(plain, "public.orders", "postgresql"), 0, "row bare")
 end)
 
+-- ── drop table: the CASCADE note reaches the confirmation dialog ─────────────
+-- _build_drop_sql above only covers the SQL half of the CASCADE story. The
+-- other half is the `note` drop_table hands to destructive_confirm on adapters
+-- that cannot CASCADE -- nothing asserted that it is rendered, so the argument
+-- could be dropped on the floor without a red test. drop_table is driven for
+-- real here (the float it opens is a plain buffer, readable headless); the only
+-- stub is the reverse-FK lookup, since the suite has no live server for most
+-- adapters. adapters.kind/display_name run unstubbed so the note's adapter name
+-- is the one users actually see.
+
+local db = require("dadbod-grip.db")
+
+--- Drive M.drop_table and return the text of the confirmation float it opened.
+--- The float (and its buffer) are closed before returning, so specs leave no
+--- window behind.
+--- @return string  the dialog's lines joined with "\n"
+local function drop_table_dialog(table_name, url, refs)
+  local orig_refs   = db.get_referencing_foreign_keys
+  local orig_notify = vim.notify
+  db.get_referencing_foreign_keys = function() return refs end
+  vim.notify = function() end
+
+  local ok, err = pcall(ddl.drop_table, table_name, url)
+
+  db.get_referencing_foreign_keys = orig_refs
+  vim.notify = orig_notify
+  if not ok then error(err, 0) end
+
+  local win   = vim.api.nvim_get_current_win()
+  local buf   = vim.api.nvim_get_current_buf()
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  return table.concat(lines, "\n")
+end
+
+local ONE_REF = { { table = "orders", column = "user_id", ref_column = "id" } }
+
+test("drop table dialog: non-CASCADE adapters warn, naming themselves", function()
+  -- The name in the note comes from adapters.display_name(url); an unknown
+  -- scheme falls back to "This adapter".
+  for _, case in ipairs({
+    { url = "sqlite:/tmp/grip_ddl_spec.db",   name = "SQLite" },
+    { url = "mysql://u:p@h:3306/db",          name = "MySQL" },
+    { url = "sqlserver://u:p@h:1433/db",      name = "SQL Server" },
+    { url = "weirdscheme://host/db",          name = "This adapter" },
+  }) do
+    local text = drop_table_dialog("users", case.url, ONE_REF)
+    contains(text, 'DROP TABLE "users"', case.name .. ": DDL shown")
+    not_contains(text, 'DROP TABLE "users" CASCADE', case.name .. ": no CASCADE in the SQL")
+    contains(text, case.name .. " doesn't support CASCADE: dependent foreign keys won't be"
+      .. " dropped, so this may fail or leave dangling references.",
+      case.name .. ": full note reached the dialog")
+  end
+end)
+
+test("drop table dialog: CASCADE adapters get CASCADE and no note", function()
+  for _, url in ipairs({ "postgresql://u:p@h:5432/db", "duckdb:/tmp/grip_ddl_spec.duckdb" }) do
+    local text = drop_table_dialog("users", url, ONE_REF)
+    contains(text, 'DROP TABLE "users" CASCADE', url .. ": CASCADE in the SQL")
+    not_contains(text, "support CASCADE", url .. ": nothing to warn about")
+  end
+end)
+
+test("drop table dialog: no dependents means no note on any adapter", function()
+  local text = drop_table_dialog("users", "sqlite:/tmp/grip_ddl_spec.db", {})
+  contains(text, 'DROP TABLE "users"', "DDL shown")
+  not_contains(text, "support CASCADE", "no dependent FKs, so no warning")
+end)
+
+test("drop table dialog: a self-FK is no dependent, so it raises no note", function()
+  -- Same guard as _filter_referencing above, seen from the dialog: a
+  -- manager_id-style self reference must not produce a scary warning.
+  local self_ref = { { table = "employees", column = "manager_id", ref_column = "id" } }
+  local text = drop_table_dialog("employees", "sqlite:/tmp/grip_ddl_spec.db", self_ref)
+  not_contains(text, "support CASCADE", "self-FK filtered before the note is built")
+end)
+
 -- ── DDL SQL patterns: add column ─────────────────────────────────────────────
 
 test("add column SQL: basic format", function()
