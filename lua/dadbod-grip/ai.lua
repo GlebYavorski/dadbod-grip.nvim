@@ -295,7 +295,11 @@ function M.build_schema_context(url, question)
   -- to the old per-table call so no table's columns are silently dropped from
   -- the prompt. "{} is truthy" would otherwise skip the fallback for a table
   -- batch resolved with zero columns.
-  local batch_cols = db.get_schema_batch(url)
+  -- pcall for the same reason as get_foreign_keys below: an adapter can throw,
+  -- and the per-table path right underneath is a complete fallback -- there is
+  -- no reason for a failed batch to take down the whole prompt.
+  local batch_ok, batch_cols = pcall(db.get_schema_batch, url)
+  if not batch_ok then batch_cols = nil end
 
   -- Build DDL for each table
   local ddl_lines = {}

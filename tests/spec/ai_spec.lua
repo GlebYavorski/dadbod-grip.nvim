@@ -154,7 +154,10 @@ local function mock_ai_db(list, batch, opts)
   local orig_fks   = db.get_foreign_keys
 
   db.list_tables = function(_) return list, nil end
-  db.get_schema_batch = function(_) return batch end
+  db.get_schema_batch = function(_)
+    if opts.batch_throws then error("adapter blew up inside get_schema_batch") end
+    return batch
+  end
   db.get_column_info = function(tbl, _)
     if opts.fail_on_get_column_info then
       error("get_column_info must not be called for '" .. tbl .. "' -- batch already served it")
@@ -227,6 +230,24 @@ test("build_schema_context: table present in batch but with zero columns still f
   restore()
   assert(ok_call, "build_schema_context must not error: " .. tostring(ddl))
   contains(ddl, "CREATE TABLE users", "users table recovered via fallback despite empty batch entry")
+end)
+
+test("build_schema_context: a throwing get_schema_batch degrades to per-table", function()
+  -- get_foreign_keys is pcall'd a few lines below for exactly this reason: an
+  -- adapter can throw. An unguarded batch call would take the whole prompt down
+  -- instead of using the per-table path that is already right there.
+  local restore = mock_ai_db(
+    { { name = "users" } },
+    nil,
+    {
+      batch_throws = true,
+      fallback_cols = { users = { { column_name = "id", data_type = "integer", is_nullable = "NO" } } },
+    }
+  )
+  local ok_call, ddl = pcall(ai.build_schema_context, "test://batch-throws", "")
+  restore()
+  assert(ok_call, "build_schema_context must survive a throwing batch call: " .. tostring(ddl))
+  contains(ddl, "CREATE TABLE users", "users table present via per-table fallback")
 end)
 
 -- ── _strip_fences ────────────────────────────────────────────────────────────
