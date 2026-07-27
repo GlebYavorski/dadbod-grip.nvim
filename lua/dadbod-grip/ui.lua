@@ -36,7 +36,7 @@ function M.truncate_display(s, width, ellipsize, marker)
   local ell = ellipsize ~= false and (marker or "…") or ""
   -- Not hoisted to a constant: 'ambiwidth' can change at runtime.
   local ell_w = vim.fn.strdisplaywidth(ell)
-  if ell ~= "" and ell_w <= width and width <= ell_w then
+  if ell ~= "" and ell_w == width then
     return ell, ell_w
   end
 
