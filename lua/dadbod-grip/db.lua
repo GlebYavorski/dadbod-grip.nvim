@@ -162,8 +162,13 @@ function M.parse_csv(raw)
 end
 
 --- Parse TSV output from mysql --batch into rows + columns.
---- MariaDB does not support --csv; --batch produces tab-separated output
---- with \N for NULL and backslash escaping for special characters.
+--- Neither the MySQL nor the MariaDB CLI has a --csv flag, hence --batch:
+--- tab-separated output with backslash escaping for tabs, newlines and NULs.
+--- NULL: mysql 8.4 --batch prints the four-byte literal "NULL" (verified live),
+--- which is why a real NULL is indistinguishable here from the string 'NULL'.
+--- The \N form comes from INTO OUTFILE / mysqldump --tab, and possibly from
+--- other/older clients -- unverified, so the branch below stays as a cheap
+--- safety net rather than being the documented behaviour.
 function M.parse_batch(raw)
   if not raw or raw == "" then
     return { columns = {}, rows = {} }
