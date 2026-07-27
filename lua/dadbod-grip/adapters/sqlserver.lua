@@ -88,10 +88,21 @@ end
 --- Message for a non-zero sqlcmd exit. With -b the server's "Msg 208, ..." text
 --- lands on stdout and stderr stays empty (stderr only carries client-side
 --- failures), so stdout is the fallback before the bare exit code.
+--- A batch that fails at run time (rather than at compile time) has already
+--- printed the earlier statements' "(N rows affected)" by then, so report from
+--- the server message onwards; output with no such line is passed through whole.
 local function sqlcmd_error(stdout, stderr, code)
   if stderr and stderr ~= "" then return stderr end
   local out = vim.trim(stdout or "")
-  if out ~= "" then return out end
+  if out ~= "" then
+    local lines = vim.split(out, "\n", { plain = true })
+    for i, line in ipairs(lines) do
+      if line:match("^Msg %d") then
+        return table.concat(lines, "\n", i)
+      end
+    end
+    return out
+  end
   return "sqlcmd exited with code " .. tostring(code)
 end
 

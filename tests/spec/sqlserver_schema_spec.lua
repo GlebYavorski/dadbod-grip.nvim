@@ -179,6 +179,38 @@ test("sqlserver execute: server error is an error, not a successful 0 rows", fun
   contains(err, "Msg 3726", "err carries the server message")
 end)
 
+-- A batch that fails at run time has already printed the successful statements'
+-- row counts, and those must not end up in front of the error the user reads.
+test("sqlserver execute: row counts before the error are stripped from err", function()
+  local out = lines({
+    "(3 rows affected)",
+    "Msg 3726, Level 16, State 1, Server abc, Line 1",
+    "Could not drop object 'dbo.users' because it is referenced by a FOREIGN KEY constraint.",
+  })
+  local err
+  with_executable(function()
+    with_system_mock(out, "", 1, function()
+      local _, e = sqlserver.execute("UPDATE dbo.products SET price = price; DROP TABLE dbo.users;", URL)
+      err = e
+    end)
+  end)
+  assert(err, "err must be set")
+  eq(err:sub(1, 3), "Msg", "err starts at the server message")
+  assert(not err:find("rows affected", 1, true), "row-count noise must be gone: " .. err)
+  contains(err, "FOREIGN KEY constraint", "the detail line is kept")
+end)
+
+test("sqlserver execute: failure text without a Msg line is passed through whole", function()
+  local err
+  with_executable(function()
+    with_system_mock("Sqlcmd: Error: Internal error at ConnectDb.\n", "", 1, function()
+      local _, e = sqlserver.execute("SELECT 1", URL)
+      err = e
+    end)
+  end)
+  contains(err, "Internal error at ConnectDb", "non-Msg output survives")
+end)
+
 test("sqlserver: sqlcmd runs with -b (without it the server exits 0 on errors)", function()
   with_executable(function()
     for _, case in ipairs({
@@ -283,6 +315,104 @@ test("sqlserver: batch and column_info share one data_type expression", function
     assert(b, "column_info statement must contain the data_type expression")
     eq(a, b, "the two data_type expressions must be identical")
   end)
+end)
+
+-- ── get_referencing_foreign_keys ────────────────────────────────────────────
+-- Columns are child_schema, child_table, fk_column, ref_column, constraint_name.
+
+test("sqlserver get_referencing_foreign_keys: parses one inbound FK", function()
+  local out = lines({
+    "child_schema\tchild_table\tfk_column\tref_column\tconstraint_name",
+    "------------\t-----------\t---------\t----------\t---------------",
+    "dbo\torders\tuser_id\tid\tfk_orders_users",
+    "",
+  })
+  local refs, err
+  with_executable(function()
+    with_system_mock(out, "", 0, function()
+      refs, err = sqlserver.get_referencing_foreign_keys("users", URL)
+    end)
+  end)
+  assert(not err, "should not error: " .. tostring(err))
+  eq(#refs, 1, "one referencing table")
+  eq(refs[1].table, "orders", "dbo children are named without the schema")
+  eq(refs[1].column, "user_id", "fk column")
+  eq(refs[1].ref_column, "id", "referenced column")
+  eq(refs[1].composite, nil, "a single-column FK is not composite")
+end)
+
+-- Two rows sharing a constraint name are one two-column FK, not two FKs: the
+-- CASCADE/warning logic counts entries, so ungrouped rows would double-count.
+test("sqlserver get_referencing_foreign_keys: composite FK groups into one entry", function()
+  local out = lines({
+    "child_schema\tchild_table\tfk_column\tref_column\tconstraint_name",
+    "------------\t-----------\t---------\t----------\t---------------",
+    "dbo\tchild\ta\ta\tfk_child_parent",
+    "dbo\tchild\tb\tb\tfk_child_parent",
+    "dbo\tother\tp\ta\tfk_other_parent",
+    "",
+  })
+  local refs
+  with_executable(function()
+    with_system_mock(out, "", 0, function()
+      refs = sqlserver.get_referencing_foreign_keys("parent", URL)
+    end)
+  end)
+  eq(#refs, 2, "two referencing tables, not three rows")
+  eq(refs[1].table, "child", "grouped entry keeps the child table")
+  eq(refs[1].column, "a,b", "both fk columns, in ordinal order")
+  eq(refs[1].ref_column, "a,b", "both referenced columns")
+  eq(refs[1].composite, true, "flagged composite")
+  eq(refs[2].composite, nil, "the single-column FK stays plain")
+end)
+
+test("sqlserver get_referencing_foreign_keys: non-dbo children keep their schema", function()
+  local out = lines({
+    "child_schema\tchild_table\tfk_column\tref_column\tconstraint_name",
+    "------------\t-----------\t---------\t----------\t---------------",
+    "sales\tinvoices\tuser_id\tid\tfk_invoices_users",
+    "dbo\torders\tuser_id\tid\tfk_orders_users",
+    "",
+  })
+  local refs
+  with_executable(function()
+    with_system_mock(out, "", 0, function()
+      refs = sqlserver.get_referencing_foreign_keys("users", URL)
+    end)
+  end)
+  eq(#refs, 2, "two referencing tables")
+  eq(refs[1].table, "sales.invoices", "other schemas are qualified, like list_tables")
+  eq(refs[2].table, "orders", "dbo stays implicit")
+end)
+
+test("sqlserver get_referencing_foreign_keys: target schema comes from the name", function()
+  with_executable(function()
+    local qualified = capture_system_args("", function()
+      sqlserver.get_referencing_foreign_keys("sales.invoices", URL)
+    end)
+    contains(qualified[#qualified], "ps.name = 'sales'", "qualified name selects its schema")
+    contains(qualified[#qualified], "pt.name = 'invoices'", "bare table name")
+
+    local bare = capture_system_args("", function()
+      sqlserver.get_referencing_foreign_keys("users", URL)
+    end)
+    contains(bare[#bare], "ps.name = 'dbo'", "unqualified name defaults to dbo")
+    contains(bare[#bare], "pt.name = 'users'", "table name")
+  end)
+end)
+
+test("sqlserver get_referencing_foreign_keys: query failure returns {} and err", function()
+  local refs, err = "unset", nil
+  with_executable(function()
+    with_system_mock("Msg 262, Level 14, State 1, Server abc, Line 1\nVIEW DEFINITION permission denied.\n",
+      "", 1, function()
+        refs, err = sqlserver.get_referencing_foreign_keys("users", URL)
+      end)
+  end)
+  eq(type(refs), "table", "always a table, never nil")
+  eq(#refs, 0, "no entries on failure")
+  assert(err, "err must be set")
+  contains(err, "Msg 262", "err carries the server message")
 end)
 
 -- ── adapters.run_cmd_async contract ─────────────────────────────────────────
