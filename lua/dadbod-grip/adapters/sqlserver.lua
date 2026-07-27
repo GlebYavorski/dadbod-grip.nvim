@@ -21,7 +21,8 @@ local function split_table_name(table_name, default_schema)
   return sql_util.split_table_name(table_name, default_schema or "dbo")
 end
 
---- Build the sqlcmd argv.
+--- Build the sqlcmd argv. A nil `sql_str` builds a connection-only argv whose
+--- statements come from stdin (see sqlcmd_batch).
 --- `opts.nocount` (default true) controls whether `SET NOCOUNT ON` is prefixed:
 --- `query` wants it (so "(N rows affected)" doesn't pollute the result grid),
 --- `execute` needs it off (so that same message is present for row-count parsing).
@@ -37,8 +38,6 @@ local function sqlcmd_args(parsed, sql_str, opts)
     server = server .. "," .. parsed.port
   end
 
-  local query = nocount and ("SET NOCOUNT ON;\n" .. sql_str) or sql_str
-
   local args = {
     "sqlcmd",
     "-S", server,
@@ -48,8 +47,14 @@ local function sqlcmd_args(parsed, sql_str, opts)
     -- every `code ~= 0` guard below would be dead and a refused DROP would be
     -- reported as a success.
     "-b",
-    "-Q", query,
   }
+
+  -- No sql_str means the statements arrive on stdin (GO-separated batches), so
+  -- there is no -Q at all.
+  if sql_str then
+    args[#args + 1] = "-Q"
+    args[#args + 1] = nocount and ("SET NOCOUNT ON;\n" .. sql_str) or sql_str
+  end
 
   if parsed.dbname and parsed.dbname ~= "" then
     table.insert(args, 4, parsed.dbname)
@@ -71,6 +76,13 @@ end
 --- Build and run the sqlcmd command, blocking.
 local function sqlcmd(parsed, sql_str, timeout_ms, opts)
   return adapters.run_cmd(sqlcmd_args(parsed, sql_str, opts), timeout_ms or DEFAULT_TIMEOUT)
+end
+
+--- Run GO-separated batches by feeding them to sqlcmd on stdin. `-Q` can only
+--- carry one batch, and SET SHOWPLAN_TEXT has to be alone in its own.
+local function sqlcmd_batch(parsed, batches, timeout_ms)
+  local script = table.concat(batches, "\nGO\n") .. "\nGO\n"
+  return adapters.run_cmd(sqlcmd_args(parsed, nil), timeout_ms or DEFAULT_TIMEOUT, { stdin = script })
 end
 
 --- Message for a non-zero sqlcmd exit. With -b the server's "Msg 208, ..." text
@@ -487,12 +499,30 @@ function M.get_table_stats(table_name, url)
   }, nil
 end
 
+--- SHOWPLAN_TEXT has to be the only statement in its batch, so the plan cannot
+--- go through run_query's single -Q string (which also prefixes SET NOCOUNT ON):
+--- the server answers every such attempt with "The SET SHOWPLAN statements must
+--- be the only statements in the batch". Two GO-separated batches on stdin.
 function M.explain(sql_str, url)
-  local result, err = run_query("SET SHOWPLAN_TEXT ON;\n" .. sql_str .. "\nSET SHOWPLAN_TEXT OFF;", url)
-  if not result then return nil, err end
+  if vim.fn.executable("sqlcmd") == 0 then
+    return nil, "sqlcmd not found. Install Microsoft sqlcmd tools."
+  end
+  local parsed = parse_url(url)
+  if not parsed then return nil, "Invalid SQL Server URL: " .. url end
+
+  local stdout, stderr, code = sqlcmd_batch(parsed, { "SET SHOWPLAN_TEXT ON", sql_str })
+  if code ~= 0 then
+    return nil, sqlcmd_error(stdout, stderr, code)
+  end
+
+  local result = parse_sqlcmd_table(stdout)
+  local header = result.columns[1]
   local lines = {}
   for _, row in ipairs(result.rows) do
-    table.insert(lines, table.concat(row, " | "))
+    local line = table.concat(row, " | ")
+    -- SHOWPLAN emits one result set per statement and sqlcmd repeats the
+    -- StmtText header for each, so the header shows up again mid-plan.
+    if line ~= header then table.insert(lines, line) end
   end
   return { lines = lines }, nil
 end

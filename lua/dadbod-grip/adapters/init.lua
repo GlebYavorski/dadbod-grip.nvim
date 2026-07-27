@@ -12,17 +12,21 @@ local M = {}
 ---
 --- @param args  string[]   argv for vim.system
 --- @param timeout_ms number|nil  process timeout in ms (default 30000)
+--- @param opts table|nil  { stdin = string } to feed the process on stdin; the
+---   sqlserver adapter needs it for GO-separated batches, which cannot be
+---   expressed as a single command-line statement.
 --- @return string stdout
 --- @return string stderr
 --- @return number exit_code
-function M.run_cmd(args, timeout_ms)
+function M.run_cmd(args, timeout_ms, opts)
   local t = timeout_ms or 30000
   local out
   local done = false
   -- vim.system() raises on spawn failure (ENOENT when the CLI is not installed).
   -- Adapters promise never to throw, and only query/execute/ping pre-check
   -- vim.fn.executable(), so swallow it here and report it like a failed exit.
-  local ok, err = pcall(vim.system, args, { text = true, timeout = t }, function(r)
+  local sys_opts = { text = true, timeout = t, stdin = opts and opts.stdin or nil }
+  local ok, err = pcall(vim.system, args, sys_opts, function(r)
     out = r
     done = true
   end)
